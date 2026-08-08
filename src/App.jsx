@@ -108,6 +108,7 @@ export default function App() {
 
     const geolocate = new mapboxgl.GeolocateControl({
       positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true,
       showUserHeading: true,
     })
     map.addControl(geolocate)
