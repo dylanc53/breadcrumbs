@@ -1,0 +1,213 @@
+.app {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+
+.map {
+  position: absolute;
+  inset: 0;
+}
+
+/* Map style toggle */
+.style-toggle {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #fff;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+/* Floating "pin my location" button */
+.fab {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 22px;
+  border: none;
+  border-radius: 999px;
+  background: #111827;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+
+.fab:active {
+  transform: translateX(-50%) scale(0.97);
+}
+
+/* Bottom sheet form */
+.sheet {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+  padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.2);
+}
+
+.sheet-handle {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: #d1d5db;
+  margin: 4px auto 12px;
+}
+
+.sheet-address {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.popup-address {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+}
+
+.status-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.status-btn {
+  flex: 1;
+  padding: 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 10px;
+  border: 2px solid #e5e7eb;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.status-btn.cold.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.status-btn.warm.active {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.status-btn.hot.active {
+  border-color: #dc2626;
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.note-input {
+  width: 100%;
+  padding: 12px;
+  font-size: 16px; /* 16px prevents iOS zoom-on-focus */
+  font-family: inherit;
+  border: 2px solid #e5e7eb;
+  border-radius: 10px;
+  resize: none;
+  margin-bottom: 12px;
+}
+
+.note-input:focus {
+  outline: none;
+  border-color: #9ca3af;
+}
+
+.action-row {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  flex: 1;
+  padding: 14px 0;
+  font-size: 16px;
+  font-weight: 600;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.btn.cancel {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.btn.save {
+  flex: 2;
+  background: #111827;
+  color: #fff;
+}
+
+.hint {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 13px;
+  color: #9ca3af;
+}
+
+/* Pin popups */
+.popup-status {
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+
+.popup-cold {
+  color: #2563eb;
+}
+
+.popup-warm {
+  color: #b45309;
+}
+
+.popup-hot {
+  color: #dc2626;
+}
+
+.popup-note {
+  margin: 6px 0;
+  font-size: 14px;
+  color: #111827;
+}
+
+.popup-date {
+  color: #6b7280;
+}
+
+/* Missing-token screen */
+.token-notice {
+  max-width: 480px;
+  margin: 15vh auto 0;
+  padding: 0 24px;
+  line-height: 1.6;
+}
+
+.token-notice h1 {
+  margin-bottom: 12px;
+}
+
+.token-notice code {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
