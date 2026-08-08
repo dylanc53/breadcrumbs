@@ -11,8 +11,6 @@ const STATUS_COLORS = {
   hot: '#dc2626',
 }
 
-const STORAGE_KEY = 'breadcrumbs-visits'
-
 const MAP_STYLES = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12',
   streets: 'mapbox://styles/mapbox/streets-v12',
@@ -26,16 +24,20 @@ const TERRITORY_BOUNDS = [
 ]
 const TERRITORY_CENTER = [-89.95, 34.98]
 
-function loadVisits() {
+const VISITS_KEY = 'breadcrumbs-visits'
+const ROUTES_KEY = 'breadcrumbs-routes'
+const ACTIVE_ROUTE_KEY = 'breadcrumbs-active-route'
+
+function loadJson(key, fallback) {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? []
+    return JSON.parse(localStorage.getItem(key)) ?? fallback
   } catch {
-    return []
+    return fallback
   }
 }
 
-function saveVisits(visits) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(visits))
+function saveJson(key, value) {
+  localStorage.setItem(key, JSON.stringify(value))
 }
 
 // crypto.randomUUID is unavailable on non-HTTPS pages (e.g. phone testing over LAN)
@@ -44,6 +46,52 @@ function makeId() {
     crypto.randomUUID?.() ??
     `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
   )
+}
+
+function haversineMeters(a, b) {
+  const R = 6371000
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.lat * Math.PI) / 180) *
+      Math.cos((b.lat * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(s))
+}
+
+function routeMiles(path) {
+  let meters = 0
+  for (let i = 1; i < path.length; i++) {
+    meters += haversineMeters(path[i - 1], path[i])
+  }
+  return meters / 1609.34
+}
+
+// Local calendar day as YYYY-MM-DD
+function dayKey(iso) {
+  return new Date(iso).toLocaleDateString('en-CA')
+}
+
+function todayKey() {
+  return new Date().toLocaleDateString('en-CA')
+}
+
+function formatDay(key) {
+  const label = new Date(`${key}T12:00:00`).toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
+  return key === todayKey() ? `Today · ${label}` : label
+}
+
+function formatTime(iso) {
+  return new Date(iso).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 const tokenMissing =
@@ -71,13 +119,32 @@ export default function App() {
   const mapRef = useRef(null)
   const markersRef = useRef([])
   const draftMarkerRef = useRef(null)
+  const routesGeojsonRef = useRef({ type: 'FeatureCollection', features: [] })
+  const openPanelRef = useRef(null)
 
-  const [visits, setVisits] = useState(loadVisits)
+  const [visits, setVisits] = useState(() => loadJson(VISITS_KEY, []))
   const [draft, setDraft] = useState(null) // { lat, lng } while the form is open
   const [draftGeo, setDraftGeo] = useState(null) // null = looking up, { address: null } = not found
   const [status, setStatus] = useState('warm')
   const [note, setNote] = useState('')
   const [mapStyle, setMapStyle] = useState('satellite')
+
+  const [routes, setRoutes] = useState(() => loadJson(ROUTES_KEY, []))
+  const [activeRoute, setActiveRoute] = useState(() =>
+    loadJson(ACTIVE_ROUTE_KEY, null)
+  )
+  const [dayFilter, setDayFilter] = useState('today') // 'today' | 'all' | 'YYYY-MM-DD'
+  const [selectedRouteId, setSelectedRouteId] = useState(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+
+  const openPanel = draft
+    ? 'visit'
+    : selectedRouteId
+      ? 'route'
+      : historyOpen
+        ? 'history'
+        : null
+  openPanelRef.current = openPanel
 
   // Resolve the tapped point to a street address; re-runs when the pin is dragged
   useEffect(() => {
@@ -114,7 +181,51 @@ export default function App() {
     map.addControl(geolocate)
     map.on('load', () => geolocate.trigger())
 
+    // Route breadcrumb lines; style.load fires on init and after every setStyle,
+    // which wipes sources, so layers are re-added there
+    const ensureRouteLayers = () => {
+      if (map.getSource('routes')) return
+      map.addSource('routes', {
+        type: 'geojson',
+        data: routesGeojsonRef.current,
+      })
+      map.addLayer({
+        id: 'route-lines',
+        type: 'line',
+        source: 'routes',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': [
+            'case',
+            ['get', 'active'],
+            '#10b981',
+            ['get', 'selected'],
+            '#f472b6',
+            '#a855f7',
+          ],
+          'line-width': ['case', ['get', 'selected'], 7, 4],
+          'line-opacity': 0.9,
+        },
+      })
+    }
+    map.on('style.load', ensureRouteLayers)
+
     map.on('click', (e) => {
+      const lineHits = map.getLayer('route-lines')
+        ? map.queryRenderedFeatures(e.point, { layers: ['route-lines'] })
+        : []
+      if (lineHits.length) {
+        setDraft(null)
+        setHistoryOpen(false)
+        setSelectedRouteId(lineHits[0].properties.routeId)
+        return
+      }
+      // Tapping the map with a panel open just closes it — no accidental pins
+      if (openPanelRef.current === 'route' || openPanelRef.current === 'history') {
+        setSelectedRouteId(null)
+        setHistoryOpen(false)
+        return
+      }
       setDraft({ lat: e.lngLat.lat, lng: e.lngLat.lng })
     })
 
@@ -164,6 +275,97 @@ export default function App() {
     })
   }, [visits])
 
+  // Push visible route lines to the map
+  useEffect(() => {
+    const visible = routes.filter((r) => {
+      if (dayFilter === 'all') return true
+      const target = dayFilter === 'today' ? todayKey() : dayFilter
+      return dayKey(r.startedAt) === target
+    })
+    const features = visible.map((r) => routeFeature(r, false, r.id === selectedRouteId))
+    if (activeRoute?.path.length >= 2) {
+      features.push(routeFeature(activeRoute, true, false))
+    }
+    const fc = { type: 'FeatureCollection', features }
+    routesGeojsonRef.current = fc
+    mapRef.current?.getSource('routes')?.setData(fc)
+  }, [routes, activeRoute, dayFilter, selectedRouteId])
+
+  // While selling: record GPS breadcrumbs and survive page refreshes
+  useEffect(() => {
+    if (!activeRoute) return
+    saveJson(ACTIVE_ROUTE_KEY, activeRoute)
+  }, [activeRoute])
+
+  useEffect(() => {
+    if (!activeRoute?.id) return
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const pt = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          t: new Date().toISOString(),
+        }
+        setActiveRoute((prev) => {
+          if (!prev) return prev
+          const last = prev.path[prev.path.length - 1]
+          if (last && haversineMeters(last, pt) < 8) return prev
+          return { ...prev, path: [...prev.path, pt] }
+        })
+      },
+      null,
+      { enableHighAccuracy: true }
+    )
+    return () => navigator.geolocation.clearWatch(watchId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRoute?.id])
+
+  // Keep the screen awake during a selling session so tracking doesn't stop
+  useEffect(() => {
+    if (!activeRoute?.id) return
+    let lock = null
+    const acquire = async () => {
+      try {
+        lock = await navigator.wakeLock?.request('screen')
+      } catch {
+        /* not supported or denied — tracking still works while screen is on */
+      }
+    }
+    acquire()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') acquire()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      lock?.release?.().catch(() => {})
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRoute?.id])
+
+  function startSelling() {
+    setDayFilter('today')
+    setActiveRoute({
+      id: makeId(),
+      startedAt: new Date().toISOString(),
+      endedAt: null,
+      path: [],
+    })
+  }
+
+  function stopSelling() {
+    const finished = { ...activeRoute, endedAt: new Date().toISOString() }
+    setActiveRoute(null)
+    localStorage.removeItem(ACTIVE_ROUTE_KEY)
+    if (finished.path.length >= 2) {
+      const next = [...routes, finished]
+      setRoutes(next)
+      saveJson(ROUTES_KEY, next)
+    } else {
+      alert("Route was too short to save — looks like you didn't move yet.")
+    }
+  }
+
   function handleSave() {
     const visit = {
       id: makeId(),
@@ -175,11 +377,12 @@ export default function App() {
       zip: draftGeo?.zip ?? null,
       status,
       note: note.trim(),
+      routeId: activeRoute?.id ?? null,
       createdAt: new Date().toISOString(),
     }
     const next = [...visits, visit]
     setVisits(next)
-    saveVisits(next)
+    saveJson(VISITS_KEY, next)
     closeForm()
   }
 
@@ -187,12 +390,6 @@ export default function App() {
     setDraft(null)
     setNote('')
     setStatus('warm')
-  }
-
-  function toggleMapStyle() {
-    const next = mapStyle === 'satellite' ? 'streets' : 'satellite'
-    setMapStyle(next)
-    mapRef.current?.setStyle(MAP_STYLES[next])
   }
 
   function dropAtMyLocation() {
@@ -206,6 +403,49 @@ export default function App() {
       { enableHighAccuracy: true, timeout: 10000 }
     )
   }
+
+  function toggleMapStyle() {
+    const next = mapStyle === 'satellite' ? 'streets' : 'satellite'
+    setMapStyle(next)
+    mapRef.current?.setStyle(MAP_STYLES[next])
+  }
+
+  function focusRoutes(list) {
+    const points = list.flatMap((r) => r.path)
+    if (!points.length) return
+    const bounds = new mapboxgl.LngLatBounds()
+    points.forEach((p) => bounds.extend([p.lng, p.lat]))
+    mapRef.current?.fitBounds(bounds, { padding: 60, maxZoom: 17 })
+  }
+
+  function openHistory() {
+    setDraft(null)
+    setSelectedRouteId(null)
+    setHistoryOpen((open) => !open)
+  }
+
+  const selectedRoute =
+    routes.find((r) => r.id === selectedRouteId) ??
+    (activeRoute?.id === selectedRouteId ? activeRoute : null)
+  const selectedRouteVisits = selectedRoute
+    ? visits.filter((v) => dayKey(v.createdAt) === dayKey(selectedRoute.startedAt))
+    : []
+
+  // Calendar summary: one row per day that has at least one route
+  const dayEntries = Object.entries(
+    routes.reduce((acc, r) => {
+      const key = dayKey(r.startedAt)
+      acc[key] = acc[key] ?? { routes: 0, visits: 0 }
+      acc[key].routes += 1
+      return acc
+    }, {})
+  )
+    .map(([key, info]) => ({
+      key,
+      routes: info.routes,
+      visits: visits.filter((v) => dayKey(v.createdAt) === key).length,
+    }))
+    .sort((a, b) => (a.key < b.key ? 1 : -1))
 
   if (tokenMissing) {
     return (
@@ -225,17 +465,38 @@ export default function App() {
     <div className="app">
       <div ref={mapContainer} className="map" />
 
-      <button className="style-toggle" onClick={toggleMapStyle}>
-        {mapStyle === 'satellite' ? '🗺️ Map' : '🛰️ Satellite'}
-      </button>
-
-      {!draft && (
-        <button className="fab" onClick={dropAtMyLocation}>
-          📍 Pin my location
+      <div className="top-left">
+        <button className="map-chip" onClick={toggleMapStyle}>
+          {mapStyle === 'satellite' ? '🗺️ Map' : '🛰️ Satellite'}
         </button>
+        <button className="map-chip" onClick={openHistory}>
+          📅 History
+        </button>
+        {dayFilter !== 'today' && (
+          <button className="map-chip filter" onClick={() => setDayFilter('today')}>
+            {dayFilter === 'all' ? 'All time ✕' : `${formatDay(dayFilter)} ✕`}
+          </button>
+        )}
+      </div>
+
+      {!openPanel && (
+        <div className="bottom-bar">
+          {activeRoute ? (
+            <button className="fab stop" onClick={stopSelling}>
+              ⏹ Stop · {routeMiles(activeRoute.path).toFixed(1)} mi
+            </button>
+          ) : (
+            <button className="fab start" onClick={startSelling}>
+              ▶ Start selling
+            </button>
+          )}
+          <button className="fab" onClick={dropAtMyLocation}>
+            📍 Pin
+          </button>
+        </div>
       )}
 
-      {draft && (
+      {openPanel === 'visit' && (
         <div className="sheet">
           <div className="sheet-handle" />
           <p className="sheet-address">
@@ -272,8 +533,107 @@ export default function App() {
           <p className="hint">Drag the pin to fine-tune its position.</p>
         </div>
       )}
+
+      {openPanel === 'route' && selectedRoute && (
+        <div className="sheet">
+          <div className="sheet-handle" />
+          <p className="sheet-title">{formatDay(dayKey(selectedRoute.startedAt))}</p>
+          <p className="sheet-sub">
+            {formatTime(selectedRoute.startedAt)}–
+            {selectedRoute.endedAt ? formatTime(selectedRoute.endedAt) : 'now'}
+            {' · '}
+            {routeMiles(selectedRoute.path).toFixed(1)} mi
+            {' · '}
+            {selectedRouteVisits.length} visit
+            {selectedRouteVisits.length === 1 ? '' : 's'}
+          </p>
+          <div className="scroll-list">
+            {selectedRouteVisits.map((v) => (
+              <div className="visit-row" key={v.id}>
+                <span
+                  className="status-dot"
+                  style={{ background: STATUS_COLORS[v.status] }}
+                />
+                <div className="visit-body">
+                  <p className="visit-addr">
+                    {v.address ?? `${v.lat.toFixed(5)}, ${v.lng.toFixed(5)}`}
+                  </p>
+                  {v.note && <p className="visit-note">{v.note}</p>}
+                  <small className="visit-time">{formatTime(v.createdAt)}</small>
+                </div>
+              </div>
+            ))}
+            {!selectedRouteVisits.length && (
+              <p className="empty">No visits logged this day.</p>
+            )}
+          </div>
+          <button className="btn cancel" onClick={() => setSelectedRouteId(null)}>
+            Close
+          </button>
+        </div>
+      )}
+
+      {openPanel === 'history' && (
+        <div className="sheet">
+          <div className="sheet-handle" />
+          <p className="sheet-title">Route history</p>
+          <div className="seg-row">
+            <button
+              className={`seg ${dayFilter === 'today' ? 'active' : ''}`}
+              onClick={() => setDayFilter('today')}
+            >
+              Today
+            </button>
+            <button
+              className={`seg ${dayFilter === 'all' ? 'active' : ''}`}
+              onClick={() => {
+                setDayFilter('all')
+                focusRoutes(routes)
+              }}
+            >
+              All time
+            </button>
+          </div>
+          <div className="scroll-list">
+            {dayEntries.map((d) => (
+              <button
+                className="day-row"
+                key={d.key}
+                onClick={() => {
+                  setDayFilter(d.key)
+                  setHistoryOpen(false)
+                  focusRoutes(routes.filter((r) => dayKey(r.startedAt) === d.key))
+                }}
+              >
+                <span className="day-label">{formatDay(d.key)}</span>
+                <span className="day-meta">
+                  {d.routes} route{d.routes === 1 ? '' : 's'} · {d.visits} visit
+                  {d.visits === 1 ? '' : 's'}
+                </span>
+              </button>
+            ))}
+            {!dayEntries.length && (
+              <p className="empty">No routes yet — hit ▶ Start selling and walk.</p>
+            )}
+          </div>
+          <button className="btn cancel" onClick={() => setHistoryOpen(false)}>
+            Close
+          </button>
+        </div>
+      )}
     </div>
   )
+}
+
+function routeFeature(route, active, selected) {
+  return {
+    type: 'Feature',
+    properties: { routeId: route.id, active, selected },
+    geometry: {
+      type: 'LineString',
+      coordinates: route.path.map((p) => [p.lng, p.lat]),
+    },
+  }
 }
 
 function escapeHtml(text) {
