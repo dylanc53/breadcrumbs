@@ -136,14 +136,23 @@ export default function App() {
   const [dayFilter, setDayFilter] = useState('today') // 'today' | 'all' | 'YYYY-MM-DD'
   const [selectedRouteId, setSelectedRouteId] = useState(null)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [editingVisitId, setEditingVisitId] = useState(null)
+  const [editStatus, setEditStatus] = useState('warm')
+  const [editNote, setEditNote] = useState('')
+  const [calMonth, setCalMonth] = useState(() => {
+    const d = new Date()
+    return { y: d.getFullYear(), m: d.getMonth() }
+  })
 
   const openPanel = draft
     ? 'visit'
-    : selectedRouteId
-      ? 'route'
-      : historyOpen
-        ? 'history'
-        : null
+    : editingVisitId
+      ? 'edit'
+      : selectedRouteId
+        ? 'route'
+        : historyOpen
+          ? 'history'
+          : null
   openPanelRef.current = openPanel
 
   // Resolve the tapped point to a street address; re-runs when the pin is dragged
@@ -217,13 +226,15 @@ export default function App() {
       if (lineHits.length) {
         setDraft(null)
         setHistoryOpen(false)
+        setEditingVisitId(null)
         setSelectedRouteId(lineHits[0].properties.routeId)
         return
       }
       // Tapping the map with a panel open just closes it — no accidental pins
-      if (openPanelRef.current === 'route' || openPanelRef.current === 'history') {
+      if (['route', 'history', 'edit'].includes(openPanelRef.current)) {
         setSelectedRouteId(null)
         setHistoryOpen(false)
+        setEditingVisitId(null)
         return
       }
       setDraft({ lat: e.lngLat.lat, lng: e.lngLat.lng })
@@ -256,22 +267,26 @@ export default function App() {
     draftMarkerRef.current = marker
   }, [draft, status])
 
-  // Saved pins
+  // Saved pins — tapping one opens the edit sheet
   useEffect(() => {
     if (!mapRef.current) return
     markersRef.current.forEach((m) => m.remove())
     markersRef.current = visits.map((v) => {
-      const when = new Date(v.createdAt).toLocaleString()
-      const popup = new mapboxgl.Popup({ offset: 30 }).setHTML(
-        `<strong class="popup-status popup-${v.status}">${v.status.toUpperCase()}</strong>
-         ${v.address ? `<p class="popup-address">${escapeHtml(v.address)}</p>` : ''}
-         <p class="popup-note">${escapeHtml(v.note) || '<em>No note</em>'}</p>
-         <small class="popup-date">${when}</small>`
-      )
-      return new mapboxgl.Marker({ color: STATUS_COLORS[v.status] })
+      const marker = new mapboxgl.Marker({ color: STATUS_COLORS[v.status] })
         .setLngLat([v.lng, v.lat])
-        .setPopup(popup)
         .addTo(mapRef.current)
+      const el = marker.getElement()
+      el.style.cursor = 'pointer'
+      el.addEventListener('click', (e) => {
+        e.stopPropagation()
+        setDraft(null)
+        setSelectedRouteId(null)
+        setHistoryOpen(false)
+        setEditingVisitId(v.id)
+        setEditStatus(v.status)
+        setEditNote(v.note ?? '')
+      })
+      return marker
     })
   }, [visits])
 
@@ -392,6 +407,25 @@ export default function App() {
     setStatus('warm')
   }
 
+  function saveEdit() {
+    const next = visits.map((v) =>
+      v.id === editingVisitId
+        ? { ...v, status: editStatus, note: editNote.trim() }
+        : v
+    )
+    setVisits(next)
+    saveJson(VISITS_KEY, next)
+    setEditingVisitId(null)
+  }
+
+  function deleteVisit() {
+    if (!confirm('Delete this pin and its note?')) return
+    const next = visits.filter((v) => v.id !== editingVisitId)
+    setVisits(next)
+    saveJson(VISITS_KEY, next)
+    setEditingVisitId(null)
+  }
+
   function dropAtMyLocation() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -431,21 +465,31 @@ export default function App() {
     ? visits.filter((v) => dayKey(v.createdAt) === dayKey(selectedRoute.startedAt))
     : []
 
-  // Calendar summary: one row per day that has at least one route
-  const dayEntries = Object.entries(
-    routes.reduce((acc, r) => {
-      const key = dayKey(r.startedAt)
-      acc[key] = acc[key] ?? { routes: 0, visits: 0 }
-      acc[key].routes += 1
-      return acc
-    }, {})
+  const editingVisit = visits.find((v) => v.id === editingVisitId)
+
+  // Calendar: route-line count per day, plus the grid for the shown month
+  const routeCounts = routes.reduce((acc, r) => {
+    const key = dayKey(r.startedAt)
+    acc[key] = (acc[key] ?? 0) + 1
+    return acc
+  }, {})
+  const firstWeekday = new Date(calMonth.y, calMonth.m, 1).getDay()
+  const daysInMonth = new Date(calMonth.y, calMonth.m + 1, 0).getDate()
+  const calCells = [
+    ...Array(firstWeekday).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ]
+  const monthLabel = new Date(calMonth.y, calMonth.m).toLocaleDateString(
+    undefined,
+    { month: 'long', year: 'numeric' }
   )
-    .map(([key, info]) => ({
-      key,
-      routes: info.routes,
-      visits: visits.filter((v) => dayKey(v.createdAt) === key).length,
-    }))
-    .sort((a, b) => (a.key < b.key ? 1 : -1))
+
+  function shiftMonth(delta) {
+    setCalMonth(({ y, m }) => {
+      const d = new Date(y, m + delta)
+      return { y: d.getFullYear(), m: d.getMonth() }
+    })
+  }
 
   if (tokenMissing) {
     return (
@@ -534,6 +578,49 @@ export default function App() {
         </div>
       )}
 
+      {openPanel === 'edit' && editingVisit && (
+        <div className="sheet">
+          <div className="sheet-handle" />
+          <p className="sheet-address">
+            {editingVisit.address ??
+              `${editingVisit.lat.toFixed(5)}, ${editingVisit.lng.toFixed(5)}`}
+          </p>
+          <p className="sheet-sub">
+            Logged {formatDay(dayKey(editingVisit.createdAt))} ·{' '}
+            {formatTime(editingVisit.createdAt)}
+          </p>
+          <div className="status-row">
+            {Object.keys(STATUS_COLORS).map((s) => (
+              <button
+                key={s}
+                className={`status-btn ${s} ${editStatus === s ? 'active' : ''}`}
+                onClick={() => setEditStatus(s)}
+              >
+                {s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+          </div>
+          <textarea
+            className="note-input"
+            placeholder="Note (who you talked to, follow-up, etc.)"
+            value={editNote}
+            onChange={(e) => setEditNote(e.target.value)}
+            rows={3}
+          />
+          <div className="action-row">
+            <button className="btn cancel" onClick={() => setEditingVisitId(null)}>
+              Cancel
+            </button>
+            <button className="btn save" onClick={saveEdit}>
+              Save changes
+            </button>
+          </div>
+          <button className="delete-link" onClick={deleteVisit}>
+            Delete this pin
+          </button>
+        </div>
+      )}
+
       {openPanel === 'route' && selectedRoute && (
         <div className="sheet">
           <div className="sheet-handle" />
@@ -594,28 +681,45 @@ export default function App() {
               All time
             </button>
           </div>
-          <div className="scroll-list">
-            {dayEntries.map((d) => (
-              <button
-                className="day-row"
-                key={d.key}
-                onClick={() => {
-                  setDayFilter(d.key)
-                  setHistoryOpen(false)
-                  focusRoutes(routes.filter((r) => dayKey(r.startedAt) === d.key))
-                }}
-              >
-                <span className="day-label">{formatDay(d.key)}</span>
-                <span className="day-meta">
-                  {d.routes} route{d.routes === 1 ? '' : 's'} · {d.visits} visit
-                  {d.visits === 1 ? '' : 's'}
-                </span>
-              </button>
-            ))}
-            {!dayEntries.length && (
-              <p className="empty">No routes yet — hit ▶ Start selling and walk.</p>
-            )}
+          <div className="cal-head">
+            <button className="cal-nav" onClick={() => shiftMonth(-1)}>
+              ‹
+            </button>
+            <span className="cal-month">{monthLabel}</span>
+            <button className="cal-nav" onClick={() => shiftMonth(1)}>
+              ›
+            </button>
           </div>
+          <div className="cal-grid">
+            {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+              <span className="cal-wd" key={`wd${i}`}>
+                {d}
+              </span>
+            ))}
+            {calCells.map((day, i) => {
+              if (day === null) return <span key={`pad${i}`} />
+              const key = `${calMonth.y}-${String(calMonth.m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+              const count = routeCounts[key]
+              return (
+                <button
+                  key={key}
+                  disabled={!count}
+                  className={`cal-day ${count ? 'has-routes' : ''} ${
+                    dayFilter === key ? 'selected' : ''
+                  } ${key === todayKey() ? 'today' : ''}`}
+                  onClick={() => {
+                    setDayFilter(key)
+                    setHistoryOpen(false)
+                    focusRoutes(routes.filter((r) => dayKey(r.startedAt) === key))
+                  }}
+                >
+                  <span className="cal-num">{day}</span>
+                  {count && <span className="cal-count">{count}</span>}
+                </button>
+              )
+            })}
+          </div>
+          <p className="hint">Days with a number badge have breadcrumb lines — tap one to see them.</p>
           <button className="btn cancel" onClick={() => setHistoryOpen(false)}>
             Close
           </button>
@@ -634,10 +738,4 @@ function routeFeature(route, active, selected) {
       coordinates: route.path.map((p) => [p.lng, p.lat]),
     },
   }
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
 }
