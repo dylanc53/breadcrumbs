@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
+import { supabase } from './supabase'
 import './App.css'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
@@ -27,6 +28,32 @@ const TERRITORY_CENTER = [-89.95, 34.98]
 const VISITS_KEY = 'breadcrumbs-visits'
 const ROUTES_KEY = 'breadcrumbs-routes'
 const ACTIVE_ROUTE_KEY = 'breadcrumbs-active-route'
+const IMPORT_FLAG = 'breadcrumbs-import-done'
+
+function visitFromDb(r) {
+  return {
+    id: r.id,
+    lat: r.lat,
+    lng: r.lng,
+    address: r.address,
+    neighborhood: r.neighborhood,
+    city: r.city,
+    zip: r.zip,
+    status: r.status,
+    note: r.note ?? '',
+    routeId: r.route_id,
+    createdAt: r.created_at,
+  }
+}
+
+function routeFromDb(r) {
+  return {
+    id: r.id,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    path: r.path ?? [],
+  }
+}
 
 function loadJson(key, fallback) {
   try {
@@ -38,14 +65,6 @@ function loadJson(key, fallback) {
 
 function saveJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value))
-}
-
-// crypto.randomUUID is unavailable on non-HTTPS pages (e.g. phone testing over LAN)
-function makeId() {
-  return (
-    crypto.randomUUID?.() ??
-    `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-  )
 }
 
 function haversineMeters(a, b) {
@@ -114,7 +133,7 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
-export default function App() {
+export default function App({ profile, org, onSignOut }) {
   const mapContainer = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef([])
@@ -122,14 +141,14 @@ export default function App() {
   const routesGeojsonRef = useRef({ type: 'FeatureCollection', features: [] })
   const openPanelRef = useRef(null)
 
-  const [visits, setVisits] = useState(() => loadJson(VISITS_KEY, []))
+  const [visits, setVisits] = useState([])
   const [draft, setDraft] = useState(null) // { lat, lng } while the form is open
   const [draftGeo, setDraftGeo] = useState(null) // null = looking up, { address: null } = not found
   const [status, setStatus] = useState('warm')
   const [note, setNote] = useState('')
   const [mapStyle, setMapStyle] = useState('satellite')
 
-  const [routes, setRoutes] = useState(() => loadJson(ROUTES_KEY, []))
+  const [routes, setRoutes] = useState([])
   const [activeRoute, setActiveRoute] = useState(() =>
     loadJson(ACTIVE_ROUTE_KEY, null)
   )
@@ -167,6 +186,95 @@ export default function App() {
       cancelled = true
     }
   }, [draft])
+
+  // Load this rep's data from the shared DB; first login on a device that has
+  // pre-account pins/routes in localStorage offers a one-time import
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      const [{ data: vRows }, { data: rRows }] = await Promise.all([
+        supabase
+          .from('visits')
+          .select('*')
+          .eq('rep_id', profile.id)
+          .order('created_at'),
+        supabase
+          .from('routes')
+          .select('*')
+          .eq('rep_id', profile.id)
+          .not('ended_at', 'is', null)
+          .order('started_at'),
+      ])
+      if (cancelled) return
+      const dbVisits = (vRows ?? []).map(visitFromDb)
+      const dbRoutes = (rRows ?? []).map(routeFromDb)
+
+      const localVisits = loadJson(VISITS_KEY, [])
+      const localRoutes = loadJson(ROUTES_KEY, [])
+      if (
+        !localStorage.getItem(IMPORT_FLAG) &&
+        (localVisits.length || localRoutes.length)
+      ) {
+        localStorage.setItem(IMPORT_FLAG, '1')
+        if (
+          confirm(
+            `Found ${localVisits.length} pins and ${localRoutes.length} routes saved on this device from before your account. Import them now?`
+          )
+        ) {
+          const routeIdMap = {}
+          for (const r of localRoutes.filter((x) => x.path?.length >= 2)) {
+            const { data } = await supabase
+              .from('routes')
+              .insert({
+                org_id: profile.org_id,
+                rep_id: profile.id,
+                started_at: r.startedAt,
+                ended_at: r.endedAt ?? r.startedAt,
+                path: r.path,
+              })
+              .select()
+              .single()
+            if (data) {
+              routeIdMap[r.id] = data.id
+              dbRoutes.push(routeFromDb(data))
+            }
+          }
+          for (const v of localVisits) {
+            const { data } = await supabase
+              .from('visits')
+              .insert({
+                org_id: profile.org_id,
+                rep_id: profile.id,
+                route_id: routeIdMap[v.routeId] ?? null,
+                lat: v.lat,
+                lng: v.lng,
+                address: v.address ?? null,
+                neighborhood: v.neighborhood ?? null,
+                city: v.city ?? null,
+                zip: v.zip ?? null,
+                status: v.status,
+                note: v.note ?? '',
+                created_at: v.createdAt,
+              })
+              .select()
+              .single()
+            if (data) dbVisits.push(visitFromDb(data))
+          }
+          localStorage.removeItem(VISITS_KEY)
+          localStorage.removeItem(ROUTES_KEY)
+        }
+      }
+
+      if (!cancelled) {
+        setVisits(dbVisits)
+        setRoutes(dbRoutes)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [profile.id, profile.org_id])
 
   useEffect(() => {
     if (tokenMissing || mapRef.current) return
@@ -312,6 +420,19 @@ export default function App() {
     saveJson(ACTIVE_ROUTE_KEY, activeRoute)
   }, [activeRoute])
 
+  // Back up the in-progress path to the DB every 5 points so a dead
+  // battery mid-session doesn't lose the whole route
+  useEffect(() => {
+    const len = activeRoute?.path.length ?? 0
+    if (!activeRoute?.id || len < 2 || len % 5 !== 0) return
+    supabase
+      .from('routes')
+      .update({ path: activeRoute.path })
+      .eq('id', activeRoute.id)
+      .then(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRoute?.path.length])
+
   useEffect(() => {
     if (!activeRoute?.id) return
     const watchId = navigator.geolocation.watchPosition(
@@ -358,46 +479,69 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRoute?.id])
 
-  function startSelling() {
+  async function startSelling() {
+    const startedAt = new Date().toISOString()
+    const { data, error } = await supabase
+      .from('routes')
+      .insert({
+        org_id: profile.org_id,
+        rep_id: profile.id,
+        started_at: startedAt,
+        path: [],
+      })
+      .select()
+      .single()
+    if (error) {
+      alert(`Could not start route: ${error.message}`)
+      return
+    }
     setDayFilter('today')
-    setActiveRoute({
-      id: makeId(),
-      startedAt: new Date().toISOString(),
-      endedAt: null,
-      path: [],
-    })
+    setActiveRoute({ id: data.id, startedAt, endedAt: null, path: [] })
   }
 
-  function stopSelling() {
+  async function stopSelling() {
     const finished = { ...activeRoute, endedAt: new Date().toISOString() }
     setActiveRoute(null)
     localStorage.removeItem(ACTIVE_ROUTE_KEY)
     if (finished.path.length >= 2) {
-      const next = [...routes, finished]
-      setRoutes(next)
-      saveJson(ROUTES_KEY, next)
+      const { error } = await supabase
+        .from('routes')
+        .update({ ended_at: finished.endedAt, path: finished.path })
+        .eq('id', finished.id)
+      if (error) {
+        alert(`Could not save route: ${error.message}`)
+        return
+      }
+      setRoutes([...routes, finished])
     } else {
+      await supabase.from('routes').delete().eq('id', finished.id)
       alert("Route was too short to save — looks like you didn't move yet.")
     }
   }
 
-  function handleSave() {
-    const visit = {
-      id: makeId(),
-      lat: draft.lat,
-      lng: draft.lng,
-      address: draftGeo?.address ?? null,
-      neighborhood: draftGeo?.neighborhood ?? null,
-      city: draftGeo?.city ?? null,
-      zip: draftGeo?.zip ?? null,
-      status,
-      note: note.trim(),
-      routeId: activeRoute?.id ?? null,
-      createdAt: new Date().toISOString(),
+  async function handleSave() {
+    const { data, error } = await supabase
+      .from('visits')
+      .insert({
+        org_id: profile.org_id,
+        rep_id: profile.id,
+        route_id: activeRoute?.id ?? null,
+        lat: draft.lat,
+        lng: draft.lng,
+        address: draftGeo?.address ?? null,
+        neighborhood: draftGeo?.neighborhood ?? null,
+        city: draftGeo?.city ?? null,
+        zip: draftGeo?.zip ?? null,
+        status,
+        note: note.trim(),
+      })
+      .select()
+      .single()
+    if (error) {
+      alert(`Could not save visit: ${error.message}`)
+      return
     }
-    const next = [...visits, visit]
-    setVisits(next)
-    saveJson(VISITS_KEY, next)
+    setVisits([...visits, visitFromDb(data)])
     closeForm()
   }
 
@@ -407,22 +551,36 @@ export default function App() {
     setStatus('warm')
   }
 
-  function saveEdit() {
-    const next = visits.map((v) =>
-      v.id === editingVisitId
-        ? { ...v, status: editStatus, note: editNote.trim() }
-        : v
+  async function saveEdit() {
+    const { error } = await supabase
+      .from('visits')
+      .update({ status: editStatus, note: editNote.trim() })
+      .eq('id', editingVisitId)
+    if (error) {
+      alert(`Could not save changes: ${error.message}`)
+      return
+    }
+    setVisits(
+      visits.map((v) =>
+        v.id === editingVisitId
+          ? { ...v, status: editStatus, note: editNote.trim() }
+          : v
+      )
     )
-    setVisits(next)
-    saveJson(VISITS_KEY, next)
     setEditingVisitId(null)
   }
 
-  function deleteVisit() {
+  async function deleteVisit() {
     if (!confirm('Delete this pin and its note?')) return
-    const next = visits.filter((v) => v.id !== editingVisitId)
-    setVisits(next)
-    saveJson(VISITS_KEY, next)
+    const { error } = await supabase
+      .from('visits')
+      .delete()
+      .eq('id', editingVisitId)
+    if (error) {
+      alert(`Could not delete: ${error.message}`)
+      return
+    }
+    setVisits(visits.filter((v) => v.id !== editingVisitId))
     setEditingVisitId(null)
   }
 
@@ -450,6 +608,15 @@ export default function App() {
     const bounds = new mapboxgl.LngLatBounds()
     points.forEach((p) => bounds.extend([p.lng, p.lat]))
     mapRef.current?.fitBounds(bounds, { padding: 60, maxZoom: 17 })
+  }
+
+  function showAccount() {
+    const teamInfo = org
+      ? `\nTeam: ${org.name}\nJoin code (give this to new reps): ${org.join_code}`
+      : ''
+    if (confirm(`Signed in as ${profile.name}${teamInfo}\n\nSign out?`)) {
+      onSignOut()
+    }
   }
 
   function openHistory() {
@@ -515,6 +682,9 @@ export default function App() {
         </button>
         <button className="map-chip" onClick={openHistory}>
           📅 History
+        </button>
+        <button className="map-chip" onClick={showAccount}>
+          👤 {profile.name.split(' ')[0]}
         </button>
         {dayFilter !== 'today' && (
           <button className="map-chip filter" onClick={() => setDayFilter('today')}>
