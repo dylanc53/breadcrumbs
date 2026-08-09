@@ -15,8 +15,10 @@ workflows:
         VITE_SUPABASE_URL: https://lafzoojalvjvefppmdmm.supabase.co
         VITE_SUPABASE_ANON_KEY: sb_publishable_G6Izr_iKGdmUdGf8oTcfqg_1CfDGKjW
       ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.customremodeling.breadcrumbs
+        provisioning_profiles:
+          - breadcrumbs_app_store
+        certificates:
+          - breadcrumbs_cert
     scripts:
       - name: Install dependencies
         script: npm ci
