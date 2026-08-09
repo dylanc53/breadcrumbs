@@ -1,0 +1,43 @@
+workflows:
+  ios-testflight:
+    name: iOS TestFlight build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: codemagic
+    environment:
+      node: 22.14.0
+      xcode: latest
+      vars:
+        # These ship inside the client bundle either way, so they are not
+        # secrets: Mapbox public token + Supabase publishable key
+        VITE_MAPBOX_TOKEN: pk.eyJ1IjoiZHlsYW5jY3JhaWciLCJhIjoiY21za3l6Y2E0MG96cjJ6b3F2N3hvY2E5cSJ9.A1brwZFydkj4LWDdtpNl-Q
+        VITE_SUPABASE_URL: https://lafzoojalvjvefppmdmm.supabase.co
+        VITE_SUPABASE_ANON_KEY: sb_publishable_G6Izr_iKGdmUdGf8oTcfqg_1CfDGKjW
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.customremodeling.breadcrumbs
+    scripts:
+      - name: Install dependencies
+        script: npm ci
+      - name: Build web app
+        script: npm run build
+      - name: Sync Capacitor iOS
+        script: npx cap sync ios
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Bump build number
+        script: |
+          cd ios/App
+          agvtool new-version -all $BUILD_NUMBER
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --project ios/App/App.xcodeproj \
+            --scheme App
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integrations
+        submit_to_testflight: true
