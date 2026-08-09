@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { supabase } from './supabase'
+import { startTracking, stopTracking, isNativeApp } from './tracking'
 import Dashboard from './Dashboard.jsx'
 import './App.css'
 
@@ -516,30 +517,24 @@ export default function App({ profile, org, onSignOut }) {
 
   useEffect(() => {
     if (!activeRoute?.id) return
-    const watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const pt = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          t: new Date().toISOString(),
-        }
-        setActiveRoute((prev) => {
-          if (!prev) return prev
-          const last = prev.path[prev.path.length - 1]
-          if (last && haversineMeters(last, pt) < 8) return prev
-          return { ...prev, path: [...prev.path, pt] }
-        })
-      },
-      null,
-      { enableHighAccuracy: true }
-    )
-    return () => navigator.geolocation.clearWatch(watchId)
+    startTracking((pt) => {
+      setActiveRoute((prev) => {
+        if (!prev) return prev
+        const last = prev.path[prev.path.length - 1]
+        if (last && haversineMeters(last, pt) < 8) return prev
+        return { ...prev, path: [...prev.path, pt] }
+      })
+    })
+    return () => {
+      stopTracking()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRoute?.id])
 
-  // Keep the screen awake during a selling session so tracking doesn't stop
+  // Keep the screen awake during a web selling session so tracking doesn't
+  // stop; the native app tracks in the background and doesn't need this
   useEffect(() => {
-    if (!activeRoute?.id) return
+    if (!activeRoute?.id || isNativeApp) return
     let lock = null
     const acquire = async () => {
       try {
