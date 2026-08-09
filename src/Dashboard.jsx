@@ -38,22 +38,26 @@ function timeAgo(iso) {
   return days === 1 ? 'yesterday' : `${days}d ago`
 }
 
-// Static Mapbox preview of the ~15 most recent pins (or the territory
-// when there are none yet)
+// High-res static Mapbox preview of the ~15 most recent pins (or the
+// territory when there are none yet). 1280@2x is the largest Mapbox serves.
 function previewUrl(visits) {
   const token = mapboxgl.accessToken
   const style = 'mapbox/satellite-streets-v12'
   const recent = visits.slice(-15)
   if (!recent.length) {
-    return `https://api.mapbox.com/styles/v1/${style}/static/-89.95,34.98,8.6,0/640x300@2x?access_token=${token}`
+    return `https://api.mapbox.com/styles/v1/${style}/static/-89.95,34.98,8.6,0/1280x640@2x?access_token=${token}`
+  }
+  if (recent.length === 1) {
+    const v = recent[0]
+    return `https://api.mapbox.com/styles/v1/${style}/static/pin-l+${STATUS_COLORS[v.status]}(${v.lng.toFixed(5)},${v.lat.toFixed(5)})/${v.lng.toFixed(5)},${v.lat.toFixed(5)},15.5,0/1280x640@2x?access_token=${token}`
   }
   const overlays = recent
     .map(
       (v) =>
-        `pin-s+${STATUS_COLORS[v.status] ?? '7c3aed'}(${v.lng.toFixed(5)},${v.lat.toFixed(5)})`
+        `pin-l+${STATUS_COLORS[v.status] ?? '7c3aed'}(${v.lng.toFixed(5)},${v.lat.toFixed(5)})`
     )
     .join(',')
-  return `https://api.mapbox.com/styles/v1/${style}/static/${overlays}/auto/640x300@2x?padding=60&access_token=${token}`
+  return `https://api.mapbox.com/styles/v1/${style}/static/${overlays}/auto/1280x640@2x?padding=100&access_token=${token}`
 }
 
 export default function Dashboard({

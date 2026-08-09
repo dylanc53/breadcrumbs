@@ -298,6 +298,32 @@ export default function App({ profile, org, onSignOut }) {
         setVisits(dbVisits)
         setRoutes(dbRoutes)
       }
+
+      // Backfill addresses for own pins saved before address lookup existed
+      const missing = dbVisits
+        .filter((v) => !v.address && v.repId === profile.id)
+        .slice(0, 25)
+      for (const v of missing) {
+        if (cancelled) return
+        try {
+          const geo = await reverseGeocode(v.lat, v.lng)
+          if (!geo.address) continue
+          await supabase
+            .from('visits')
+            .update({
+              address: geo.address,
+              neighborhood: geo.neighborhood,
+              city: geo.city,
+              zip: geo.zip,
+            })
+            .eq('id', v.id)
+          setVisits((prev) =>
+            prev.map((x) => (x.id === v.id ? { ...x, ...geo } : x))
+          )
+        } catch {
+          /* offline or rate-limited — next load retries */
+        }
+      }
     }
     load()
     return () => {
