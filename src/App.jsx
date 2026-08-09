@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { supabase } from './supabase'
-import { startTracking, stopTracking, isNativeApp } from './tracking'
+import {
+  startTracking,
+  stopTracking,
+  getRecordedPoints,
+  clearRecordedPoints,
+  isNativeApp,
+} from './tracking'
 import Dashboard from './Dashboard.jsx'
 import './App.css'
 
@@ -531,6 +537,25 @@ export default function App({ profile, org, onSignOut }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRoute?.id])
 
+  // iOS freezes JavaScript while the app is backgrounded, so the live
+  // callback above misses those points. Whenever the app comes back to
+  // the foreground, rebuild the path from what the plugin recorded.
+  useEffect(() => {
+    if (!activeRoute?.id || !isNativeApp) return
+    const started = activeRoute.startedAt
+    const refresh = async () => {
+      if (document.visibilityState !== 'visible') return
+      const points = await getRecordedPoints(started)
+      setActiveRoute((prev) =>
+        prev && points.length > prev.path.length ? { ...prev, path: points } : prev
+      )
+    }
+    document.addEventListener('visibilitychange', refresh)
+    refresh()
+    return () => document.removeEventListener('visibilitychange', refresh)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRoute?.id])
+
   // Keep the screen awake during a web selling session so tracking doesn't
   // stop; the native app tracks in the background and doesn't need this
   useEffect(() => {
@@ -571,6 +596,7 @@ export default function App({ profile, org, onSignOut }) {
       alert(`Could not start route: ${error.message}`)
       return
     }
+    await clearRecordedPoints()
     setDayFilter('today')
     setViewRep('me')
     setActiveRoute({
@@ -583,7 +609,14 @@ export default function App({ profile, org, onSignOut }) {
   }
 
   async function stopSelling() {
-    const finished = { ...activeRoute, endedAt: new Date().toISOString() }
+    // Take whatever the plugin recorded — it includes the stretches where
+    // the app was suspended and the JS callback couldn't fire
+    let path = activeRoute.path
+    if (isNativeApp) {
+      const recorded = await getRecordedPoints(activeRoute.startedAt)
+      if (recorded.length > path.length) path = recorded
+    }
+    const finished = { ...activeRoute, path, endedAt: new Date().toISOString() }
     setActiveRoute(null)
     localStorage.removeItem(ACTIVE_ROUTE_KEY)
     if (finished.path.length >= 2) {
