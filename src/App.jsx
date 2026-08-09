@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { supabase } from './supabase'
+import Dashboard from './Dashboard.jsx'
 import './App.css'
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN
@@ -184,6 +185,7 @@ export default function App({ profile, org, onSignOut }) {
   const [viewRep, setViewRep] = useState('me') // 'me' | 'team' | a rep's id
   const [statusFilter, setStatusFilter] = useState('all')
   const [viewOpen, setViewOpen] = useState(false)
+  const [screen, setScreen] = useState('dashboard') // 'dashboard' | 'map'
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date()
     return { y: d.getFullYear(), m: d.getMonth() }
@@ -756,7 +758,28 @@ export default function App({ profile, org, onSignOut }) {
     <div className="app">
       <div ref={mapContainer} className="map" />
 
+      {screen === 'dashboard' && (
+        <Dashboard
+          profile={profile}
+          org={org}
+          teammates={teammates}
+          visits={visits}
+          routes={routes}
+          repColor={repColor}
+          activeRoute={activeRoute}
+          onAccount={showAccount}
+          onOpenMap={(view) => {
+            if (view) setViewRep(view)
+            setScreen('map')
+            setTimeout(() => mapRef.current?.resize(), 0)
+          }}
+        />
+      )}
+
       <div className="top-left">
+        <button className="map-chip" onClick={() => setScreen('dashboard')}>
+          🏠 Home
+        </button>
         <button className="map-chip" onClick={toggleMapStyle}>
           {mapStyle === 'satellite' ? '🗺️ Map' : '🛰️ Satellite'}
         </button>
