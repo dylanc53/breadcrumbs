@@ -27,8 +27,14 @@ export default function Auth({ needsProfile, onProfileReady }) {
       }
 
       if (!needsProfile) {
-        const { error } = await supabase.auth.signUp({ email, password })
+        const { data, error } = await supabase.auth.signUp({ email, password })
         if (error) throw error
+        if (!data.session) {
+          throw new Error(
+            'Signup needs email confirmation, which this app does not use. ' +
+              'Ask your admin to disable "Confirm email" in Supabase auth settings, then try again.'
+          )
+        }
       }
 
       const rpc =
