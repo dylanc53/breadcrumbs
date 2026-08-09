@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from './supabase'
 import Auth from './Auth.jsx'
+import Landing from './Landing.jsx'
 import App from './App.jsx'
 
 export default function Root() {
@@ -8,6 +9,7 @@ export default function Root() {
   const [profile, setProfile] = useState(undefined)
   const [org, setOrg] = useState(null)
   const [reloadNonce, setReloadNonce] = useState(0)
+  const [authMode, setAuthMode] = useState(null) // null = landing, 'login' | 'signup'
 
   useEffect(() => {
     if (!supabase) return
@@ -76,7 +78,23 @@ export default function Root() {
 
   if (session === undefined) return <div className="auth-screen" />
 
-  if (!session) return <Auth needsProfile={false} onProfileReady={loadProfile} />
+  if (!session) {
+    if (!authMode) {
+      return (
+        <Landing
+          onLogin={() => setAuthMode('login')}
+          onSignup={() => setAuthMode('signup')}
+        />
+      )
+    }
+    return (
+      <Auth
+        initialMode={authMode}
+        needsProfile={false}
+        onProfileReady={loadProfile}
+      />
+    )
+  }
 
   if (profile === undefined) return <div className="auth-screen" />
 

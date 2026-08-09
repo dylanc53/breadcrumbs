@@ -4,8 +4,10 @@ import { supabase } from './supabase'
 // Login / signup screen. Signup either creates a new team (first user,
 // becomes manager) or joins an existing one with its 6-character code.
 // `needsProfile` handles a signed-in user whose org step didn't finish.
-export default function Auth({ needsProfile, onProfileReady }) {
-  const [mode, setMode] = useState(needsProfile ? 'signup' : 'login')
+export default function Auth({ initialMode, needsProfile, onProfileReady }) {
+  const [mode, setMode] = useState(
+    needsProfile ? 'signup' : (initialMode ?? 'login')
+  )
   const [orgMode, setOrgMode] = useState('join') // 'join' | 'create'
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')

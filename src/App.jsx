@@ -33,6 +33,7 @@ const IMPORT_FLAG = 'breadcrumbs-import-done'
 function visitFromDb(r) {
   return {
     id: r.id,
+    repId: r.rep_id,
     lat: r.lat,
     lng: r.lng,
     address: r.address,
@@ -49,10 +50,31 @@ function visitFromDb(r) {
 function routeFromDb(r) {
   return {
     id: r.id,
+    repId: r.rep_id,
     startedAt: r.started_at,
     endedAt: r.ended_at,
     path: r.path ?? [],
   }
+}
+
+// Distinct line colors per rep in team views
+const REP_COLORS = [
+  '#a855f7',
+  '#0ea5e9',
+  '#f97316',
+  '#14b8a6',
+  '#e11d48',
+  '#84cc16',
+  '#6366f1',
+  '#d946ef',
+]
+
+function initialsOf(name) {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('')
 }
 
 function loadJson(key, fallback) {
@@ -158,6 +180,10 @@ export default function App({ profile, org, onSignOut }) {
   const [editingVisitId, setEditingVisitId] = useState(null)
   const [editStatus, setEditStatus] = useState('warm')
   const [editNote, setEditNote] = useState('')
+  const [teammates, setTeammates] = useState([])
+  const [viewRep, setViewRep] = useState('me') // 'me' | 'team' | a rep's id
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [viewOpen, setViewOpen] = useState(false)
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date()
     return { y: d.getFullYear(), m: d.getMonth() }
@@ -171,7 +197,9 @@ export default function App({ profile, org, onSignOut }) {
         ? 'route'
         : historyOpen
           ? 'history'
-          : null
+          : viewOpen
+            ? 'view'
+            : null
   openPanelRef.current = openPanel
 
   // Resolve the tapped point to a street address; re-runs when the pin is dragged
@@ -192,20 +220,19 @@ export default function App({ profile, org, onSignOut }) {
   useEffect(() => {
     let cancelled = false
     async function load() {
-      const [{ data: vRows }, { data: rRows }] = await Promise.all([
-        supabase
-          .from('visits')
-          .select('*')
-          .eq('rep_id', profile.id)
-          .order('created_at'),
-        supabase
-          .from('routes')
-          .select('*')
-          .eq('rep_id', profile.id)
-          .not('ended_at', 'is', null)
-          .order('started_at'),
-      ])
+      // Whole team's data; security rules scope these to the org
+      const [{ data: vRows }, { data: rRows }, { data: pRows }] =
+        await Promise.all([
+          supabase.from('visits').select('*').order('created_at'),
+          supabase
+            .from('routes')
+            .select('*')
+            .not('ended_at', 'is', null)
+            .order('started_at'),
+          supabase.from('profiles').select('*').order('created_at'),
+        ])
       if (cancelled) return
+      setTeammates(pRows ?? [])
       const dbVisits = (vRows ?? []).map(visitFromDb)
       const dbRoutes = (rRows ?? []).map(routeFromDb)
 
@@ -312,14 +339,7 @@ export default function App({ profile, org, onSignOut }) {
         source: 'routes',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': [
-            'case',
-            ['get', 'active'],
-            '#10b981',
-            ['get', 'selected'],
-            '#f472b6',
-            '#a855f7',
-          ],
+          'line-color': ['get', 'color'],
           'line-width': ['case', ['get', 'selected'], 7, 4],
           'line-opacity': 0.9,
         },
@@ -339,10 +359,11 @@ export default function App({ profile, org, onSignOut }) {
         return
       }
       // Tapping the map with a panel open just closes it — no accidental pins
-      if (['route', 'history', 'edit'].includes(openPanelRef.current)) {
+      if (['route', 'history', 'edit', 'view'].includes(openPanelRef.current)) {
         setSelectedRouteId(null)
         setHistoryOpen(false)
         setEditingVisitId(null)
+        setViewOpen(false)
         return
       }
       setDraft({ lat: e.lngLat.lat, lng: e.lngLat.lng })
@@ -375,44 +396,76 @@ export default function App({ profile, org, onSignOut }) {
     draftMarkerRef.current = marker
   }, [draft, status])
 
-  // Saved pins — tapping one opens the edit sheet
+  const repMatches = (repId) =>
+    viewRep === 'team'
+      ? true
+      : viewRep === 'me'
+        ? repId === profile.id
+        : repId === viewRep
+  const repName = (repId) =>
+    teammates.find((t) => t.id === repId)?.name ?? 'Teammate'
+  const repColor = (repId) =>
+    REP_COLORS[
+      Math.max(0, teammates.findIndex((t) => t.id === repId)) %
+        REP_COLORS.length
+    ]
+
+  const visibleVisits = visits.filter(
+    (v) =>
+      repMatches(v.repId) &&
+      (statusFilter === 'all' || v.status === statusFilter)
+  )
+
+  // Saved pins — status-colored circles with the rep's initials;
+  // tapping one opens the edit sheet
   useEffect(() => {
     if (!mapRef.current) return
     markersRef.current.forEach((m) => m.remove())
-    markersRef.current = visits.map((v) => {
-      const marker = new mapboxgl.Marker({ color: STATUS_COLORS[v.status] })
-        .setLngLat([v.lng, v.lat])
-        .addTo(mapRef.current)
-      const el = marker.getElement()
-      el.style.cursor = 'pointer'
+    markersRef.current = visibleVisits.map((v) => {
+      const el = document.createElement('div')
+      el.className = 'pin-marker'
+      el.style.background = STATUS_COLORS[v.status]
+      el.textContent = initialsOf(repName(v.repId))
       el.addEventListener('click', (e) => {
         e.stopPropagation()
         setDraft(null)
         setSelectedRouteId(null)
         setHistoryOpen(false)
+        setViewOpen(false)
         setEditingVisitId(v.id)
         setEditStatus(v.status)
         setEditNote(v.note ?? '')
       })
-      return marker
+      return new mapboxgl.Marker({ element: el })
+        .setLngLat([v.lng, v.lat])
+        .addTo(mapRef.current)
     })
-  }, [visits])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visits, viewRep, statusFilter, teammates])
 
-  // Push visible route lines to the map
+  // Push visible route lines to the map, colored per rep
   useEffect(() => {
     const visible = routes.filter((r) => {
+      if (!repMatches(r.repId)) return false
       if (dayFilter === 'all') return true
       const target = dayFilter === 'today' ? todayKey() : dayFilter
       return dayKey(r.startedAt) === target
     })
-    const features = visible.map((r) => routeFeature(r, false, r.id === selectedRouteId))
+    const features = visible.map((r) =>
+      routeFeature(
+        r,
+        r.id === selectedRouteId ? '#f472b6' : repColor(r.repId),
+        r.id === selectedRouteId
+      )
+    )
     if (activeRoute?.path.length >= 2) {
-      features.push(routeFeature(activeRoute, true, false))
+      features.push(routeFeature(activeRoute, '#10b981', false))
     }
     const fc = { type: 'FeatureCollection', features }
     routesGeojsonRef.current = fc
     mapRef.current?.getSource('routes')?.setData(fc)
-  }, [routes, activeRoute, dayFilter, selectedRouteId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routes, activeRoute, dayFilter, selectedRouteId, viewRep, teammates])
 
   // While selling: record GPS breadcrumbs and survive page refreshes
   useEffect(() => {
@@ -496,7 +549,14 @@ export default function App({ profile, org, onSignOut }) {
       return
     }
     setDayFilter('today')
-    setActiveRoute({ id: data.id, startedAt, endedAt: null, path: [] })
+    setViewRep('me')
+    setActiveRoute({
+      id: data.id,
+      repId: profile.id,
+      startedAt,
+      endedAt: null,
+      path: [],
+    })
   }
 
   async function stopSelling() {
@@ -622,17 +682,37 @@ export default function App({ profile, org, onSignOut }) {
   function openHistory() {
     setDraft(null)
     setSelectedRouteId(null)
+    setViewOpen(false)
     setHistoryOpen((open) => !open)
+  }
+
+  function openViewPicker() {
+    setDraft(null)
+    setSelectedRouteId(null)
+    setHistoryOpen(false)
+    setViewOpen((open) => !open)
   }
 
   const selectedRoute =
     routes.find((r) => r.id === selectedRouteId) ??
     (activeRoute?.id === selectedRouteId ? activeRoute : null)
   const selectedRouteVisits = selectedRoute
-    ? visits.filter((v) => dayKey(v.createdAt) === dayKey(selectedRoute.startedAt))
+    ? visits.filter(
+        (v) =>
+          v.repId === selectedRoute.repId &&
+          dayKey(v.createdAt) === dayKey(selectedRoute.startedAt)
+      )
     : []
 
   const editingVisit = visits.find((v) => v.id === editingVisitId)
+  const editingIsMine = editingVisit?.repId === profile.id
+  const canEditVisit = editingIsMine || profile.role === 'manager'
+  const viewLabel =
+    viewRep === 'me'
+      ? 'My pins'
+      : viewRep === 'team'
+        ? 'Team'
+        : repName(viewRep).split(' ')[0]
 
   // Calendar: route-line count per day, plus the grid for the shown month
   const routeCounts = routes.reduce((acc, r) => {
@@ -682,6 +762,10 @@ export default function App({ profile, org, onSignOut }) {
         </button>
         <button className="map-chip" onClick={openHistory}>
           📅 History
+        </button>
+        <button className="map-chip" onClick={openViewPicker}>
+          👥 {viewLabel}
+          {statusFilter !== 'all' ? ` · ${statusFilter}` : ''}
         </button>
         <button className="map-chip" onClick={showAccount}>
           👤 {profile.name.split(' ')[0]}
@@ -756,37 +840,114 @@ export default function App({ profile, org, onSignOut }) {
               `${editingVisit.lat.toFixed(5)}, ${editingVisit.lng.toFixed(5)}`}
           </p>
           <p className="sheet-sub">
-            Logged {formatDay(dayKey(editingVisit.createdAt))} ·{' '}
+            {editingIsMine ? 'Your pin' : `Pinned by ${repName(editingVisit.repId)}`}
+            {' · '}
+            {formatDay(dayKey(editingVisit.createdAt))} ·{' '}
             {formatTime(editingVisit.createdAt)}
           </p>
-          <div className="status-row">
-            {Object.keys(STATUS_COLORS).map((s) => (
+          {canEditVisit ? (
+            <>
+              <div className="status-row">
+                {Object.keys(STATUS_COLORS).map((s) => (
+                  <button
+                    key={s}
+                    className={`status-btn ${s} ${editStatus === s ? 'active' : ''}`}
+                    onClick={() => setEditStatus(s)}
+                  >
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                className="note-input"
+                placeholder="Note (who you talked to, follow-up, etc.)"
+                value={editNote}
+                onChange={(e) => setEditNote(e.target.value)}
+                rows={3}
+              />
+              <div className="action-row">
+                <button
+                  className="btn cancel"
+                  onClick={() => setEditingVisitId(null)}
+                >
+                  Cancel
+                </button>
+                <button className="btn save" onClick={saveEdit}>
+                  Save changes
+                </button>
+              </div>
+              <button className="delete-link" onClick={deleteVisit}>
+                Delete this pin
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="readonly-status" style={{ color: STATUS_COLORS[editingVisit.status] }}>
+                {editingVisit.status.toUpperCase()}
+              </p>
+              <p className="readonly-note">
+                {editingVisit.note || 'No note.'}
+              </p>
+              <button className="btn cancel" onClick={() => setEditingVisitId(null)}>
+                Close
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {openPanel === 'view' && (
+        <div className="sheet">
+          <div className="sheet-handle" />
+          <p className="sheet-title">Map view</p>
+          <div className="scroll-list">
+            <button
+              className={`day-row ${viewRep === 'me' ? 'row-active' : ''}`}
+              onClick={() => setViewRep('me')}
+            >
+              <span className="day-label">My pins & routes</span>
+            </button>
+            <button
+              className={`day-row ${viewRep === 'team' ? 'row-active' : ''}`}
+              onClick={() => setViewRep('team')}
+            >
+              <span className="day-label">Whole team</span>
+              <span className="day-meta">{teammates.length} reps</span>
+            </button>
+            {teammates
+              .filter((t) => t.id !== profile.id)
+              .map((t) => (
+                <button
+                  key={t.id}
+                  className={`day-row ${viewRep === t.id ? 'row-active' : ''}`}
+                  onClick={() => setViewRep(t.id)}
+                >
+                  <span className="day-label">
+                    <span
+                      className="rep-swatch"
+                      style={{ background: repColor(t.id) }}
+                    />
+                    {t.name}
+                  </span>
+                  <span className="day-meta">
+                    {visits.filter((v) => v.repId === t.id).length} pins
+                  </span>
+                </button>
+              ))}
+          </div>
+          <div className="seg-row">
+            {['all', 'cold', 'warm', 'hot'].map((s) => (
               <button
                 key={s}
-                className={`status-btn ${s} ${editStatus === s ? 'active' : ''}`}
-                onClick={() => setEditStatus(s)}
+                className={`seg ${statusFilter === s ? 'active' : ''}`}
+                onClick={() => setStatusFilter(s)}
               >
                 {s.charAt(0).toUpperCase() + s.slice(1)}
               </button>
             ))}
           </div>
-          <textarea
-            className="note-input"
-            placeholder="Note (who you talked to, follow-up, etc.)"
-            value={editNote}
-            onChange={(e) => setEditNote(e.target.value)}
-            rows={3}
-          />
-          <div className="action-row">
-            <button className="btn cancel" onClick={() => setEditingVisitId(null)}>
-              Cancel
-            </button>
-            <button className="btn save" onClick={saveEdit}>
-              Save changes
-            </button>
-          </div>
-          <button className="delete-link" onClick={deleteVisit}>
-            Delete this pin
+          <button className="btn cancel" onClick={() => setViewOpen(false)}>
+            Close
           </button>
         </div>
       )}
@@ -796,6 +957,8 @@ export default function App({ profile, org, onSignOut }) {
           <div className="sheet-handle" />
           <p className="sheet-title">{formatDay(dayKey(selectedRoute.startedAt))}</p>
           <p className="sheet-sub">
+            {repName(selectedRoute.repId)}
+            {' · '}
             {formatTime(selectedRoute.startedAt)}–
             {selectedRoute.endedAt ? formatTime(selectedRoute.endedAt) : 'now'}
             {' · '}
@@ -899,10 +1062,10 @@ export default function App({ profile, org, onSignOut }) {
   )
 }
 
-function routeFeature(route, active, selected) {
+function routeFeature(route, color, selected) {
   return {
     type: 'Feature',
-    properties: { routeId: route.id, active, selected },
+    properties: { routeId: route.id, color, selected: !!selected },
     geometry: {
       type: 'LineString',
       coordinates: route.path.map((p) => [p.lng, p.lat]),
