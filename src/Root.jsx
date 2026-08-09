@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from './supabase'
 import Auth from './Auth.jsx'
 import App from './App.jsx'
@@ -7,6 +7,7 @@ export default function Root() {
   const [session, setSession] = useState(undefined) // undefined = still checking
   const [profile, setProfile] = useState(undefined)
   const [org, setOrg] = useState(null)
+  const [reloadNonce, setReloadNonce] = useState(0)
 
   useEffect(() => {
     if (!supabase) return
@@ -17,31 +18,47 @@ export default function Root() {
     return () => sub.subscription.unsubscribe()
   }, [])
 
-  const loadProfile = useCallback(async () => {
-    const { data: prof } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .maybeSingle()
-    setProfile(prof)
-    if (prof) {
-      const { data: orgRow } = await supabase
-        .from('orgs')
-        .select('*')
-        .eq('id', prof.org_id)
-        .maybeSingle()
-      setOrg(orgRow)
-    }
-  }, [session])
-
+  // Right after signup the profile row is created a beat later than the
+  // session, so a missing profile is retried before concluding it's absent
   useEffect(() => {
     if (!session) {
       setProfile(undefined)
       setOrg(null)
       return
     }
-    loadProfile()
-  }, [session, loadProfile])
+    let cancelled = false
+    let attempts = 0
+    async function tryLoad() {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', session.user.id)
+        .maybeSingle()
+      if (cancelled) return
+      if (prof) {
+        setProfile(prof)
+        const { data: orgRow } = await supabase
+          .from('orgs')
+          .select('*')
+          .eq('id', prof.org_id)
+          .maybeSingle()
+        if (!cancelled) setOrg(orgRow)
+        return
+      }
+      attempts += 1
+      if (attempts < 6) {
+        setTimeout(() => cancelled || tryLoad(), 1000)
+      } else {
+        setProfile(null)
+      }
+    }
+    tryLoad()
+    return () => {
+      cancelled = true
+    }
+  }, [session, reloadNonce])
+
+  const loadProfile = () => setReloadNonce((n) => n + 1)
 
   if (!supabase) {
     return (
