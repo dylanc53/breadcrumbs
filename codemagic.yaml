@@ -18,7 +18,7 @@ workflows:
         provisioning_profiles:
           - breadcrumbs_app_store
         certificates:
-          - breadcrumbs_cert
+          - breadcrumbs
     scripts:
       - name: Install dependencies
         script: npm ci
