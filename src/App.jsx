@@ -9,6 +9,7 @@ import {
   clearRecordedPoints,
   isNativeApp,
 } from './tracking'
+import { toggleDictation } from './dictation'
 import Dashboard from './Dashboard.jsx'
 import './App.css'
 
@@ -58,10 +59,6 @@ function visitFromDb(r) {
   }
 }
 
-const SpeechRec =
-  typeof window !== 'undefined'
-    ? (window.SpeechRecognition ?? window.webkitSpeechRecognition)
-    : null
 
 function routeFromDb(r) {
   return {
@@ -190,7 +187,6 @@ export default function App({ profile, org, onSignOut }) {
   const [mapStyle, setMapStyle] = useState('satellite')
   const [menuOpen, setMenuOpen] = useState(false)
   const [dictating, setDictating] = useState(false)
-  const speechRef = useRef(null)
 
   const [routes, setRoutes] = useState([])
   const [activeRoute, setActiveRoute] = useState(() =>
@@ -698,28 +694,8 @@ export default function App({ profile, org, onSignOut }) {
     setFollowUp(false)
   }
 
-  // Voice-to-text for notes; falls back to the keyboard mic where the
-  // browser has no speech API
   function dictate(applyText) {
-    if (dictating) {
-      speechRef.current?.stop()
-      return
-    }
-    const rec = new SpeechRec()
-    rec.lang = 'en-US'
-    rec.interimResults = false
-    rec.onresult = (e) => {
-      const text = Array.from(e.results)
-        .map((r) => r[0].transcript)
-        .join(' ')
-        .trim()
-      if (text) applyText(text)
-    }
-    rec.onend = () => setDictating(false)
-    rec.onerror = () => setDictating(false)
-    speechRef.current = rec
-    setDictating(true)
-    rec.start()
+    toggleDictation(applyText, setDictating)
   }
 
   async function saveEdit() {
@@ -1018,16 +994,14 @@ export default function App({ profile, org, onSignOut }) {
               onChange={(e) => setNote(e.target.value)}
               rows={3}
             />
-            {SpeechRec && (
-              <button
-                className={`mic-btn ${dictating ? 'on' : ''}`}
-                onClick={() =>
-                  dictate((t) => setNote((n) => (n ? `${n} ${t}` : t)))
-                }
-              >
-                🎤
-              </button>
-            )}
+            <button
+              className={`mic-btn ${dictating ? 'on' : ''}`}
+              onClick={() =>
+                dictate((t) => setNote((n) => (n ? `${n} ${t}` : t)))
+              }
+            >
+              🎤
+            </button>
           </div>
           <button
             className={`revisit-toggle ${followUp ? 'on' : ''}`}
@@ -1095,16 +1069,14 @@ export default function App({ profile, org, onSignOut }) {
                   onChange={(e) => setEditNote(e.target.value)}
                   rows={3}
                 />
-                {SpeechRec && (
-                  <button
-                    className={`mic-btn ${dictating ? 'on' : ''}`}
-                    onClick={() =>
-                      dictate((t) => setEditNote((n) => (n ? `${n} ${t}` : t)))
-                    }
-                  >
-                    🎤
-                  </button>
-                )}
+                <button
+                  className={`mic-btn ${dictating ? 'on' : ''}`}
+                  onClick={() =>
+                    dictate((t) => setEditNote((n) => (n ? `${n} ${t}` : t)))
+                  }
+                >
+                  🎤
+                </button>
               </div>
               <button
                 className={`revisit-toggle ${editFollowUp ? 'on' : ''}`}

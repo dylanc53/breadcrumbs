@@ -72,6 +72,10 @@
 	<string>Breadcrumbs uses your location to drop pins at the houses you visit and to draw your selling route on the map.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Breadcrumbs tracks your location during an active selling session, including with the screen off, so your full route is recorded. Tracking only runs between Start Selling and Stop.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Breadcrumbs turns your voice into visit notes so you can log a door without typing.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>The microphone is used to dictate visit notes hands-free.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Motion activity helps Breadcrumbs record your route battery-efficiently by pausing GPS when you are not moving.</string>
 	<key>UIBackgroundModes</key>
