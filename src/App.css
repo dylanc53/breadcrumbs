@@ -66,6 +66,12 @@
   border-color: #9ca3af;
 }
 
+.field-full {
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+}
+
 .note-wrap {
   position: relative;
 }

@@ -53,6 +53,7 @@ function visitFromDb(r) {
     note: r.note ?? '',
     customerName: r.customer_name ?? '',
     customerPhone: r.customer_phone ?? '',
+    customerEmail: r.customer_email ?? '',
     followUp: r.follow_up ?? false,
     routeId: r.route_id,
     createdAt: r.created_at,
@@ -183,6 +184,7 @@ export default function App({ profile, org, onSignOut }) {
   const [note, setNote] = useState('')
   const [custName, setCustName] = useState('')
   const [custPhone, setCustPhone] = useState('')
+  const [custEmail, setCustEmail] = useState('')
   const [followUp, setFollowUp] = useState(false)
   const [mapStyle, setMapStyle] = useState('satellite')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -200,6 +202,7 @@ export default function App({ profile, org, onSignOut }) {
   const [editNote, setEditNote] = useState('')
   const [editCustName, setEditCustName] = useState('')
   const [editCustPhone, setEditCustPhone] = useState('')
+  const [editCustEmail, setEditCustEmail] = useState('')
   const [editFollowUp, setEditFollowUp] = useState(false)
   const [teammates, setTeammates] = useState([])
   const [viewRep, setViewRep] = useState('me') // 'me' | 'team' | a rep's id
@@ -362,6 +365,7 @@ export default function App({ profile, org, onSignOut }) {
       maxBounds: TERRITORY_BOUNDS,
       minZoom: 9,
       attributionControl: false,
+      logoPosition: 'bottom-right',
     })
 
     // Compact ⓘ instead of the full attribution text line (the small
@@ -490,6 +494,7 @@ export default function App({ profile, org, onSignOut }) {
         setEditNote(v.note ?? '')
         setEditCustName(v.customerName ?? '')
         setEditCustPhone(v.customerPhone ?? '')
+        setEditCustEmail(v.customerEmail ?? '')
         setEditFollowUp(v.followUp ?? false)
       })
       return new mapboxgl.Marker({ element: el })
@@ -673,6 +678,7 @@ export default function App({ profile, org, onSignOut }) {
         note: note.trim(),
         customer_name: custName.trim() || null,
         customer_phone: custPhone.trim() || null,
+        customer_email: custEmail.trim() || null,
         follow_up: followUp,
       })
       .select()
@@ -691,6 +697,7 @@ export default function App({ profile, org, onSignOut }) {
     setStatus('warm')
     setCustName('')
     setCustPhone('')
+    setCustEmail('')
     setFollowUp(false)
   }
 
@@ -704,6 +711,7 @@ export default function App({ profile, org, onSignOut }) {
       note: editNote.trim(),
       customerName: editCustName.trim(),
       customerPhone: editCustPhone.trim(),
+      customerEmail: editCustEmail.trim(),
       followUp: editFollowUp,
     }
     const { error } = await supabase
@@ -713,6 +721,7 @@ export default function App({ profile, org, onSignOut }) {
         note: changes.note,
         customer_name: changes.customerName || null,
         customer_phone: changes.customerPhone || null,
+        customer_email: changes.customerEmail || null,
         follow_up: changes.followUp,
       })
       .eq('id', editingVisitId)
@@ -975,6 +984,13 @@ export default function App({ profile, org, onSignOut }) {
               onChange={(e) => setCustPhone(e.target.value)}
             />
           </div>
+          <input
+            className="field field-full"
+            type="email"
+            placeholder="Email"
+            value={custEmail}
+            onChange={(e) => setCustEmail(e.target.value)}
+          />
           <div className="status-row">
             {Object.keys(STATUS_COLORS).map((s) => (
               <button
@@ -1050,6 +1066,13 @@ export default function App({ profile, org, onSignOut }) {
                   onChange={(e) => setEditCustPhone(e.target.value)}
                 />
               </div>
+              <input
+                className="field field-full"
+                type="email"
+                placeholder="Email"
+                value={editCustEmail}
+                onChange={(e) => setEditCustEmail(e.target.value)}
+              />
               <div className="status-row">
                 {Object.keys(STATUS_COLORS).map((s) => (
                   <button
@@ -1107,7 +1130,11 @@ export default function App({ profile, org, onSignOut }) {
               </p>
               {(editingVisit.customerName || editingVisit.customerPhone) && (
                 <p className="readonly-note">
-                  {[editingVisit.customerName, editingVisit.customerPhone]
+                  {[
+                    editingVisit.customerName,
+                    editingVisit.customerPhone,
+                    editingVisit.customerEmail,
+                  ]
                     .filter(Boolean)
                     .join(' · ')}
                 </p>

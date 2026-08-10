@@ -19,7 +19,7 @@ export async function toggleDictation(applyText, setListening) {
 
   if (isNative) {
     const { SpeechRecognition } = await import(
-      '@capacitor-community/speech-recognition'
+      '@capgo/capacitor-speech-recognition'
     )
     const perm = await SpeechRecognition.requestPermissions()
     if (perm.speechRecognition === 'denied') {
