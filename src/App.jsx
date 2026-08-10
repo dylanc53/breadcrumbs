@@ -50,10 +50,18 @@ function visitFromDb(r) {
     zip: r.zip,
     status: r.status,
     note: r.note ?? '',
+    customerName: r.customer_name ?? '',
+    customerPhone: r.customer_phone ?? '',
+    followUp: r.follow_up ?? false,
     routeId: r.route_id,
     createdAt: r.created_at,
   }
 }
+
+const SpeechRec =
+  typeof window !== 'undefined'
+    ? (window.SpeechRecognition ?? window.webkitSpeechRecognition)
+    : null
 
 function routeFromDb(r) {
   return {
@@ -176,7 +184,13 @@ export default function App({ profile, org, onSignOut }) {
   const [draftGeo, setDraftGeo] = useState(null) // null = looking up, { address: null } = not found
   const [status, setStatus] = useState('warm')
   const [note, setNote] = useState('')
+  const [custName, setCustName] = useState('')
+  const [custPhone, setCustPhone] = useState('')
+  const [followUp, setFollowUp] = useState(false)
   const [mapStyle, setMapStyle] = useState('satellite')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [dictating, setDictating] = useState(false)
+  const speechRef = useRef(null)
 
   const [routes, setRoutes] = useState([])
   const [activeRoute, setActiveRoute] = useState(() =>
@@ -188,6 +202,9 @@ export default function App({ profile, org, onSignOut }) {
   const [editingVisitId, setEditingVisitId] = useState(null)
   const [editStatus, setEditStatus] = useState('warm')
   const [editNote, setEditNote] = useState('')
+  const [editCustName, setEditCustName] = useState('')
+  const [editCustPhone, setEditCustPhone] = useState('')
+  const [editFollowUp, setEditFollowUp] = useState(false)
   const [teammates, setTeammates] = useState([])
   const [viewRep, setViewRep] = useState('me') // 'me' | 'team' | a rep's id
   const [statusFilter, setStatusFilter] = useState('all')
@@ -348,7 +365,12 @@ export default function App({ profile, org, onSignOut }) {
       zoom: 10,
       maxBounds: TERRITORY_BOUNDS,
       minZoom: 9,
+      attributionControl: false,
     })
+
+    // Compact ⓘ instead of the full attribution text line (the small
+    // Mapbox logo itself is required by their terms of service)
+    map.addControl(new mapboxgl.AttributionControl({ compact: true }))
 
     map.addControl(new mapboxgl.NavigationControl({ showCompass: false }))
 
@@ -458,7 +480,7 @@ export default function App({ profile, org, onSignOut }) {
     markersRef.current.forEach((m) => m.remove())
     markersRef.current = visibleVisits.map((v) => {
       const el = document.createElement('div')
-      el.className = 'pin-marker'
+      el.className = v.followUp ? 'pin-marker revisit' : 'pin-marker'
       el.style.background = STATUS_COLORS[v.status]
       el.textContent = initialsOf(repName(v.repId))
       el.addEventListener('click', (e) => {
@@ -470,6 +492,9 @@ export default function App({ profile, org, onSignOut }) {
         setEditingVisitId(v.id)
         setEditStatus(v.status)
         setEditNote(v.note ?? '')
+        setEditCustName(v.customerName ?? '')
+        setEditCustPhone(v.customerPhone ?? '')
+        setEditFollowUp(v.followUp ?? false)
       })
       return new mapboxgl.Marker({ element: el })
         .setLngLat([v.lng, v.lat])
@@ -650,6 +675,9 @@ export default function App({ profile, org, onSignOut }) {
         zip: draftGeo?.zip ?? null,
         status,
         note: note.trim(),
+        customer_name: custName.trim() || null,
+        customer_phone: custPhone.trim() || null,
+        follow_up: followUp,
       })
       .select()
       .single()
@@ -665,23 +693,59 @@ export default function App({ profile, org, onSignOut }) {
     setDraft(null)
     setNote('')
     setStatus('warm')
+    setCustName('')
+    setCustPhone('')
+    setFollowUp(false)
+  }
+
+  // Voice-to-text for notes; falls back to the keyboard mic where the
+  // browser has no speech API
+  function dictate(applyText) {
+    if (dictating) {
+      speechRef.current?.stop()
+      return
+    }
+    const rec = new SpeechRec()
+    rec.lang = 'en-US'
+    rec.interimResults = false
+    rec.onresult = (e) => {
+      const text = Array.from(e.results)
+        .map((r) => r[0].transcript)
+        .join(' ')
+        .trim()
+      if (text) applyText(text)
+    }
+    rec.onend = () => setDictating(false)
+    rec.onerror = () => setDictating(false)
+    speechRef.current = rec
+    setDictating(true)
+    rec.start()
   }
 
   async function saveEdit() {
+    const changes = {
+      status: editStatus,
+      note: editNote.trim(),
+      customerName: editCustName.trim(),
+      customerPhone: editCustPhone.trim(),
+      followUp: editFollowUp,
+    }
     const { error } = await supabase
       .from('visits')
-      .update({ status: editStatus, note: editNote.trim() })
+      .update({
+        status: changes.status,
+        note: changes.note,
+        customer_name: changes.customerName || null,
+        customer_phone: changes.customerPhone || null,
+        follow_up: changes.followUp,
+      })
       .eq('id', editingVisitId)
     if (error) {
       alert(`Could not save changes: ${error.message}`)
       return
     }
     setVisits(
-      visits.map((v) =>
-        v.id === editingVisitId
-          ? { ...v, status: editStatus, note: editNote.trim() }
-          : v
-      )
+      visits.map((v) => (v.id === editingVisitId ? { ...v, ...changes } : v))
     )
     setEditingVisitId(null)
   }
@@ -757,15 +821,6 @@ export default function App({ profile, org, onSignOut }) {
       return
     }
     setTeammates(teammates.filter((t) => t.id !== member.id))
-  }
-
-  function showAccount() {
-    const teamInfo = org
-      ? `\nTeam: ${org.name}\nJoin code (give this to new reps): ${org.join_code}`
-      : ''
-    if (confirm(`Signed in as ${profile.name}${teamInfo}\n\nSign out?`)) {
-      onSignOut()
-    }
   }
 
   function openHistory() {
@@ -848,7 +903,7 @@ export default function App({ profile, org, onSignOut }) {
           routes={routes}
           repColor={repColor}
           activeRoute={activeRoute}
-          onAccount={showAccount}
+          onSignOut={onSignOut}
           onInvite={inviteRep}
           onRemoveMember={profile.role === 'manager' ? removeMember : null}
           onOpenMap={(view) => {
@@ -860,21 +915,43 @@ export default function App({ profile, org, onSignOut }) {
       )}
 
       <div className="top-left">
-        <button className="map-chip" onClick={() => setScreen('dashboard')}>
-          🏠 Home
+        <button className="map-chip" onClick={() => setMenuOpen((open) => !open)}>
+          {menuOpen ? '✕ Close' : '☰ Menu'}
         </button>
-        <button className="map-chip" onClick={toggleMapStyle}>
-          {mapStyle === 'satellite' ? '🗺️ Map' : '🛰️ Satellite'}
-        </button>
-        <button className="map-chip" onClick={openHistory}>
-          📅 History
-        </button>
-        <button className="map-chip" onClick={openViewPicker}>
-          👥 Team{statusFilter !== 'all' ? ` · ${statusFilter}` : ''}
-        </button>
-        <button className="map-chip" onClick={showAccount}>
-          👤 {profile.name.split(' ')[0]}
-        </button>
+        {menuOpen && (
+          <div className="map-menu">
+            <button
+              className="map-chip"
+              onClick={() => {
+                setScreen('dashboard')
+                setMenuOpen(false)
+              }}
+            >
+              🏠 Home
+            </button>
+            <button className="map-chip" onClick={toggleMapStyle}>
+              {mapStyle === 'satellite' ? '🗺️ Street view' : '🛰️ Satellite'}
+            </button>
+            <button
+              className="map-chip"
+              onClick={() => {
+                openHistory()
+                setMenuOpen(false)
+              }}
+            >
+              📅 History
+            </button>
+            <button
+              className="map-chip"
+              onClick={() => {
+                openViewPicker()
+                setMenuOpen(false)
+              }}
+            >
+              👥 Team{statusFilter !== 'all' ? ` · ${statusFilter}` : ''}
+            </button>
+          </div>
+        )}
         {dayFilter !== 'today' && (
           <button className="map-chip filter" onClick={() => setDayFilter('today')}>
             {dayFilter === 'all' ? 'All time ✕' : `${formatDay(dayFilter)} ✕`}
@@ -907,6 +984,21 @@ export default function App({ profile, org, onSignOut }) {
               ? 'Finding address…'
               : draftGeo.address ?? 'No address found — pin saves by location only'}
           </p>
+          <div className="field-row">
+            <input
+              className="field"
+              placeholder="Customer name"
+              value={custName}
+              onChange={(e) => setCustName(e.target.value)}
+            />
+            <input
+              className="field"
+              type="tel"
+              placeholder="Phone"
+              value={custPhone}
+              onChange={(e) => setCustPhone(e.target.value)}
+            />
+          </div>
           <div className="status-row">
             {Object.keys(STATUS_COLORS).map((s) => (
               <button
@@ -918,13 +1010,31 @@ export default function App({ profile, org, onSignOut }) {
               </button>
             ))}
           </div>
-          <textarea
-            className="note-input"
-            placeholder="Note (who you talked to, follow-up, etc.)"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={3}
-          />
+          <div className="note-wrap">
+            <textarea
+              className="note-input"
+              placeholder="Note (who you talked to, objections, etc.)"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={3}
+            />
+            {SpeechRec && (
+              <button
+                className={`mic-btn ${dictating ? 'on' : ''}`}
+                onClick={() =>
+                  dictate((t) => setNote((n) => (n ? `${n} ${t}` : t)))
+                }
+              >
+                🎤
+              </button>
+            )}
+          </div>
+          <button
+            className={`revisit-toggle ${followUp ? 'on' : ''}`}
+            onClick={() => setFollowUp((f) => !f)}
+          >
+            🔁 Revisit this door{followUp ? ' ✓' : ''}
+          </button>
           <div className="action-row">
             <button className="btn cancel" onClick={closeForm}>
               Cancel
@@ -933,7 +1043,6 @@ export default function App({ profile, org, onSignOut }) {
               Save visit
             </button>
           </div>
-          <p className="hint">Drag the pin to fine-tune its position.</p>
         </div>
       )}
 
@@ -952,6 +1061,21 @@ export default function App({ profile, org, onSignOut }) {
           </p>
           {canEditVisit ? (
             <>
+              <div className="field-row">
+                <input
+                  className="field"
+                  placeholder="Customer name"
+                  value={editCustName}
+                  onChange={(e) => setEditCustName(e.target.value)}
+                />
+                <input
+                  className="field"
+                  type="tel"
+                  placeholder="Phone"
+                  value={editCustPhone}
+                  onChange={(e) => setEditCustPhone(e.target.value)}
+                />
+              </div>
               <div className="status-row">
                 {Object.keys(STATUS_COLORS).map((s) => (
                   <button
@@ -963,13 +1087,31 @@ export default function App({ profile, org, onSignOut }) {
                   </button>
                 ))}
               </div>
-              <textarea
-                className="note-input"
-                placeholder="Note (who you talked to, follow-up, etc.)"
-                value={editNote}
-                onChange={(e) => setEditNote(e.target.value)}
-                rows={3}
-              />
+              <div className="note-wrap">
+                <textarea
+                  className="note-input"
+                  placeholder="Note (who you talked to, objections, etc.)"
+                  value={editNote}
+                  onChange={(e) => setEditNote(e.target.value)}
+                  rows={3}
+                />
+                {SpeechRec && (
+                  <button
+                    className={`mic-btn ${dictating ? 'on' : ''}`}
+                    onClick={() =>
+                      dictate((t) => setEditNote((n) => (n ? `${n} ${t}` : t)))
+                    }
+                  >
+                    🎤
+                  </button>
+                )}
+              </div>
+              <button
+                className={`revisit-toggle ${editFollowUp ? 'on' : ''}`}
+                onClick={() => setEditFollowUp((f) => !f)}
+              >
+                🔁 Revisit this door{editFollowUp ? ' ✓' : ''}
+              </button>
               <div className="action-row">
                 <button
                   className="btn cancel"
@@ -989,7 +1131,15 @@ export default function App({ profile, org, onSignOut }) {
             <>
               <p className="readonly-status" style={{ color: STATUS_COLORS[editingVisit.status] }}>
                 {editingVisit.status.toUpperCase()}
+                {editingVisit.followUp ? ' · 🔁 REVISIT' : ''}
               </p>
+              {(editingVisit.customerName || editingVisit.customerPhone) && (
+                <p className="readonly-note">
+                  {[editingVisit.customerName, editingVisit.customerPhone]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+              )}
               <p className="readonly-note">
                 {editingVisit.note || 'No note.'}
               </p>

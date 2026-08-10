@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import mapboxgl from 'mapbox-gl'
 
 const STATUS_COLORS = { cold: '2563eb', warm: 'f59e0b', hot: 'dc2626' }
@@ -69,10 +70,11 @@ export default function Dashboard({
   repColor,
   activeRoute,
   onOpenMap,
-  onAccount,
+  onSignOut,
   onInvite,
   onRemoveMember,
 }) {
+  const [acctOpen, setAcctOpen] = useState(false)
   const today = todayKey()
   const todayVisits = visits.filter((v) => dayKey(v.createdAt) === today)
   const todayRoutes = routes.filter((r) => dayKey(r.startedAt) === today)
@@ -103,9 +105,27 @@ export default function Dashboard({
     <div className="dash">
       <header className="dash-head">
         <span className="dash-brand">🍞 {org?.name ?? 'Breadcrumbs'}</span>
-        <button className="map-chip" onClick={onAccount}>
-          👤 {profile.name.split(' ')[0]}
-        </button>
+        <div className="acct-wrap">
+          <button
+            className="map-chip"
+            onClick={() => setAcctOpen((open) => !open)}
+          >
+            👤 {profile.name.split(' ')[0]} ▾
+          </button>
+          {acctOpen && (
+            <div className="acct-menu">
+              <p className="acct-name">{profile.name}</p>
+              {org && (
+                <p className="acct-team">
+                  {org.name} · join code <strong>{org.join_code}</strong>
+                </p>
+              )}
+              <button className="acct-item" onClick={onSignOut}>
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       {activeRoute && (
