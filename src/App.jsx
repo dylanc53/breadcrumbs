@@ -438,7 +438,7 @@ export default function App({ profile, org, onSignOut }) {
         ? repId === profile.id
         : repId === viewRep
   const repName = (repId) =>
-    teammates.find((t) => t.id === repId)?.name ?? 'Teammate'
+    teammates.find((t) => t.id === repId)?.name ?? 'Former rep'
   const repColor = (repId) =>
     REP_COLORS[
       Math.max(0, teammates.findIndex((t) => t.id === repId)) %
@@ -726,6 +726,39 @@ export default function App({ profile, org, onSignOut }) {
     mapRef.current?.fitBounds(bounds, { padding: 60, maxZoom: 17 })
   }
 
+  async function inviteRep() {
+    const text =
+      `Join ${org?.name ?? 'our team'} on Breadcrumbs!\n` +
+      `1. Open https://breadcrumbs-blue-zeta.vercel.app\n` +
+      `2. Tap "Start your team free", then "Join a team"\n` +
+      `3. Enter join code: ${org?.join_code}`
+    if (navigator.share) {
+      try {
+        await navigator.share({ text })
+      } catch {
+        /* user closed the share sheet */
+      }
+    } else {
+      await navigator.clipboard.writeText(text)
+      alert('Invite copied to clipboard — paste it into a text to your rep.')
+    }
+  }
+
+  async function removeMember(member) {
+    if (
+      !confirm(
+        `Remove ${member.name} from the team? They lose access, but their pins and routes stay on the map as "Former rep".`
+      )
+    )
+      return
+    const { error } = await supabase.rpc('remove_member', { member: member.id })
+    if (error) {
+      alert(`Could not remove: ${error.message}`)
+      return
+    }
+    setTeammates(teammates.filter((t) => t.id !== member.id))
+  }
+
   function showAccount() {
     const teamInfo = org
       ? `\nTeam: ${org.name}\nJoin code (give this to new reps): ${org.join_code}`
@@ -763,12 +796,6 @@ export default function App({ profile, org, onSignOut }) {
   const editingVisit = visits.find((v) => v.id === editingVisitId)
   const editingIsMine = editingVisit?.repId === profile.id
   const canEditVisit = editingIsMine || profile.role === 'manager'
-  const viewLabel =
-    viewRep === 'me'
-      ? 'My pins'
-      : viewRep === 'team'
-        ? 'Team'
-        : repName(viewRep).split(' ')[0]
 
   // Calendar: route-line count per day, plus the grid for the shown month
   const routeCounts = routes.reduce((acc, r) => {
@@ -822,6 +849,8 @@ export default function App({ profile, org, onSignOut }) {
           repColor={repColor}
           activeRoute={activeRoute}
           onAccount={showAccount}
+          onInvite={inviteRep}
+          onRemoveMember={profile.role === 'manager' ? removeMember : null}
           onOpenMap={(view) => {
             if (view) setViewRep(view)
             setScreen('map')
@@ -841,8 +870,7 @@ export default function App({ profile, org, onSignOut }) {
           📅 History
         </button>
         <button className="map-chip" onClick={openViewPicker}>
-          👥 {viewLabel}
-          {statusFilter !== 'all' ? ` · ${statusFilter}` : ''}
+          👥 Team{statusFilter !== 'all' ? ` · ${statusFilter}` : ''}
         </button>
         <button className="map-chip" onClick={showAccount}>
           👤 {profile.name.split(' ')[0]}

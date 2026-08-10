@@ -70,6 +70,8 @@ export default function Dashboard({
   activeRoute,
   onOpenMap,
   onAccount,
+  onInvite,
+  onRemoveMember,
 }) {
   const today = todayKey()
   const todayVisits = visits.filter((v) => dayKey(v.createdAt) === today)
@@ -126,7 +128,12 @@ export default function Dashboard({
         <span className="map-preview-cta">Open map →</span>
       </button>
 
-      <p className="dash-section">Team</p>
+      <div className="dash-section-row">
+        <p className="dash-section">Team</p>
+        <button className="invite-btn" onClick={onInvite}>
+          ＋ Invite a rep
+        </button>
+      </div>
       <div className="dash-roster">
         <button className="day-row" onClick={() => onOpenMap('team')}>
           <span className="day-label">👥 Whole team</span>
@@ -152,6 +159,18 @@ export default function Dashboard({
               <span className="day-meta">
                 {s.pins} pins · {s.hot} hot · {s.lastSeen}
               </span>
+              {onRemoveMember && !isMe && (
+                <span
+                  className="remove-btn"
+                  role="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onRemoveMember(t)
+                  }}
+                >
+                  ✕
+                </span>
+              )}
             </button>
           )
         })}
