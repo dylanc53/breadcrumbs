@@ -43,10 +43,35 @@ node .claude/skills/run-breadcrumbs/driver.mjs https://breadcrumbs-blue-zeta.ver
 ### Test account
 
 The driver logs in as `dylancraig53+smoke@gmail.com` / `smoke-test-2026!` —
-a dedicated account in its own "Smoke Test" org, isolated from the real team
-by row-level security. Override with `BREADCRUMBS_TEST_EMAIL` /
-`BREADCRUMBS_TEST_PASSWORD` env vars. Don't log the smoke account into the
-real team; pins it saves would pollute real data (its own org is fine).
+a dedicated account in its own org ("Mitchell Exteriors", profile name "Ray
+Mitchell"), isolated from the real team by row-level security. Override with
+`BREADCRUMBS_TEST_EMAIL` / `BREADCRUMBS_TEST_PASSWORD`. Don't log this
+account into the real team; pins it saves would pollute real data.
+
+These same credentials are what Apple's reviewers use — see
+`app-store-submission.md`.
+
+## Demo data
+
+```powershell
+node .claude/skills/run-breadcrumbs/seed-demo.mjs
+```
+
+Wipes and re-seeds the smoke account with a 60-point walking route through a
+Southaven neighborhood and 9 visits (real reverse-geocoded addresses, varied
+statuses, customer details, revisit flags), and sets the org's region tight
+around those streets. Run this before screenshots or any demo.
+
+## App Store assets
+
+```powershell
+node .claude/skills/run-breadcrumbs/make-icon.mjs      # icon → ios asset + public/
+node .claude/skills/run-breadcrumbs/store-shots.mjs    # 5 shots at 1320x2868 → store-shots/
+```
+
+`store-shots.mjs` runs against production by default and captures dashboard,
+map, visit sheet, history calendar, and team picker at the 6.9" iPhone size
+Apple requires. Re-run `seed-demo.mjs` first or the screens will be empty.
 
 ## Run (human path)
 
@@ -78,9 +103,14 @@ so remote builds receive a placeholder and produce a broken bundle.
   post-login home changes, update that selector in the driver.
 - **Mapbox renders fine in headless Chrome** (software WebGL) but tiles take
   a few seconds — the driver waits 4s after the map mounts before shooting.
-- **The smoke org has no sales region**, so the map opens on the whole-US
-  view, and a tap at that zoom finds no street address — the form shows
-  "No address found" and that's expected, not a failure.
+- **Map pins overlap and intercept each other's clicks** — Playwright's
+  normal `.click()` times out with "intercepts pointer events". Use
+  `.dispatchEvent('click')` on the marker instead (see `store-shots.mjs`).
+- **A wide sales region makes for useless screenshots** — pins collapse into
+  one blob and the route trail vanishes. `seed-demo.mjs` deliberately sets a
+  neighborhood-sized region so the map opens at street level.
+- **The map may show "No address found"** when tapped at low zoom over open
+  land — expected, not a failure; the pin still saves by coordinates.
 - **Vite auto-restarts when `.env` changes** — no manual restart needed.
 - **StrictMode double-mount** is handled in the map init; if the map ever
   renders blank in dev, check that `mapRef.current` is nulled in the cleanup.

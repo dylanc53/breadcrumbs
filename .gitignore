@@ -27,3 +27,4 @@ dist-ssr
 .vercel
 .env*
 .claude/skills/run-breadcrumbs/shots*/
+store-shots/

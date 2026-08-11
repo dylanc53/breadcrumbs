@@ -55,6 +55,8 @@ export default function Landing({ onLogin, onSignup }) {
 
       <footer className="landing-foot">
         Built for small teams that knock. · Breadcrumbs
+        <br />
+        <a href="/privacy.html">Privacy</a> · <a href="/support.html">Support</a>
       </footer>
     </div>
   )

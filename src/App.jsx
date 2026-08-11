@@ -228,6 +228,7 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
   const openPanelRef = useRef(null)
 
   const [visits, setVisits] = useState([])
+  const [dataLoading, setDataLoading] = useState(true)
   const [draft, setDraft] = useState(null) // { lat, lng } while the form is open
   const [draftGeo, setDraftGeo] = useState(null) // null = looking up, { address: null } = not found
   const [status, setStatus] = useState('warm')
@@ -375,6 +376,7 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
       if (!cancelled) {
         setVisits(dbVisits)
         setRoutes(dbRoutes)
+        setDataLoading(false)
       }
 
       // Backfill addresses for own pins saved before address lookup existed
@@ -1147,6 +1149,7 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
           routes={routes}
           repColor={repColor}
           activeRoute={activeRoute}
+          loading={dataLoading}
           onSignOut={onSignOut}
           onInvite={inviteRep}
           onRemoveMember={profile.role === 'manager' ? removeMember : null}
@@ -1211,9 +1214,9 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
             </button>
           </div>
         )}
-        {dayFilter !== 'today' && (
-          <button className="map-chip filter" onClick={() => setDayFilter('today')}>
-            {dayFilter === 'all' ? 'All time ✕' : `${formatDay(dayFilter)} ✕`}
+        {dayFilter !== 'all' && (
+          <button className="map-chip filter" onClick={() => setDayFilter('all')}>
+            {dayFilter === 'today' ? 'Today ✕' : `${formatDay(dayFilter)} ✕`}
           </button>
         )}
       </div>

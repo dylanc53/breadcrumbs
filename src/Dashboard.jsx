@@ -75,13 +75,19 @@ export default function Dashboard({
   onRemoveMember,
   onEditRegion,
   liveRepIds,
+  loading,
 }) {
   const [acctOpen, setAcctOpen] = useState(false)
+  const [scope, setScope] = useState('me') // 'me' | 'team'
   const today = todayKey()
-  const todayVisits = visits.filter((v) => dayKey(v.createdAt) === today)
-  const todayRoutes = routes.filter((r) => dayKey(r.startedAt) === today)
-  const todayMiles = todayRoutes.reduce((sum, r) => sum + pathMiles(r.path), 0)
-  const hotTotal = visits.filter((v) => v.status === 'hot').length
+
+  const inScope = (repId) => scope === 'team' || repId === profile.id
+  const scopedVisits = visits.filter((v) => inScope(v.repId))
+  const scopedRoutes = routes.filter((r) => inScope(r.repId))
+  const todayVisits = scopedVisits.filter((v) => dayKey(v.createdAt) === today)
+  const todayMiles = scopedRoutes
+    .filter((r) => dayKey(r.startedAt) === today)
+    .reduce((sum, r) => sum + pathMiles(r.path), 0)
 
   const kpis = [
     { label: 'Doors today', value: todayVisits.length },
@@ -90,8 +96,13 @@ export default function Dashboard({
       value: todayVisits.filter((v) => v.status === 'hot').length,
     },
     { label: 'Miles today', value: todayMiles.toFixed(1) },
-    { label: 'Hot leads all-time', value: hotTotal },
+    {
+      label: 'Hot leads all-time',
+      value: scopedVisits.filter((v) => v.status === 'hot').length,
+    },
   ]
+
+  const isNewUser = !loading && !visits.length && !routes.length
 
   function repStats(repId) {
     const mine = visits.filter((v) => v.repId === repId)
@@ -149,17 +160,57 @@ export default function Dashboard({
         </button>
       )}
 
+      {isNewUser && (
+        <div className="welcome-card">
+          <h2>Welcome, {profile.name.split(' ')[0]} 👋</h2>
+          <ol>
+            <li>
+              Tap <strong>Open map</strong> below — it centers on where you are.
+            </li>
+            <li>
+              Hit <strong>▶ Start selling</strong> and your walking route draws
+              itself behind you.
+            </li>
+            <li>
+              Tap a house to drop a pin, mark it{' '}
+              <strong>Cold / Warm / Hot</strong>, and add a note.
+            </li>
+          </ol>
+          <p className="welcome-foot">
+            Your pins and notes stay private to you. Your teammates only see
+            where you&apos;ve covered.
+          </p>
+        </div>
+      )}
+
+      <div className="seg-row scope-row">
+        <button
+          className={`seg ${scope === 'me' ? 'active' : ''}`}
+          onClick={() => setScope('me')}
+        >
+          You
+        </button>
+        <button
+          className={`seg ${scope === 'team' ? 'active' : ''}`}
+          onClick={() => setScope('team')}
+        >
+          Team
+        </button>
+      </div>
+
       <div className="kpi-grid">
         {kpis.map((k) => (
           <div className="kpi-card" key={k.label}>
-            <span className="kpi-value">{k.value}</span>
+            <span className={`kpi-value ${loading ? 'loading' : ''}`}>
+              {loading ? '—' : k.value}
+            </span>
             <span className="kpi-label">{k.label}</span>
           </div>
         ))}
       </div>
 
       <button className="map-preview" onClick={() => onOpenMap()}>
-        <img src={previewUrl(visits)} alt="Team map" loading="lazy" />
+        <img src={previewUrl(scopedVisits)} alt="Map preview" loading="lazy" />
         <span className="map-preview-cta">Open map →</span>
       </button>
 

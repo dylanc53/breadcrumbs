@@ -4,6 +4,17 @@ import Auth from './Auth.jsx'
 import Landing from './Landing.jsx'
 import App from './App.jsx'
 
+function Splash({ label }) {
+  return (
+    <div className="splash">
+      <span className="splash-logo">🍞</span>
+      <span className="splash-name">Breadcrumbs</span>
+      {label && <span className="splash-label">{label}</span>}
+      <span className="spinner" />
+    </div>
+  )
+}
+
 export default function Root() {
   const [session, setSession] = useState(undefined) // undefined = still checking
   const [profile, setProfile] = useState(undefined)
@@ -76,7 +87,7 @@ export default function Root() {
     )
   }
 
-  if (session === undefined) return <div className="auth-screen" />
+  if (session === undefined) return <Splash />
 
   if (!session) {
     if (!authMode) {
@@ -96,7 +107,7 @@ export default function Root() {
     )
   }
 
-  if (profile === undefined) return <div className="auth-screen" />
+  if (profile === undefined) return <Splash label="Loading your team…" />
 
   // Signed in but the org step never finished (e.g. closed mid-signup)
   if (!profile) return <Auth needsProfile onProfileReady={loadProfile} />
