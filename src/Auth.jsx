@@ -14,6 +14,7 @@ export default function Auth({ initialMode, needsProfile, onProfileReady }) {
   const [password, setPassword] = useState('')
   const [orgName, setOrgName] = useState('')
   const [joinCode, setJoinCode] = useState('')
+  const [regionText, setRegionText] = useState('')
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
 
@@ -51,6 +52,9 @@ export default function Auth({ initialMode, needsProfile, onProfileReady }) {
             })
       const { error } = await rpc
       if (error) throw error
+      if (orgMode === 'create' && regionText.trim()) {
+        localStorage.setItem('breadcrumbs-pending-region', regionText.trim())
+      }
       onProfileReady()
     } catch (err) {
       setError(err.message)
@@ -126,13 +130,21 @@ export default function Auth({ initialMode, needsProfile, onProfileReady }) {
                 required
               />
             ) : (
-              <input
-                className="auth-input"
-                placeholder="Team name (e.g. Custom Remodeling)"
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                required
-              />
+              <>
+                <input
+                  className="auth-input"
+                  placeholder="Team name (e.g. Custom Remodeling)"
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  required
+                />
+                <input
+                  className="auth-input"
+                  placeholder="Sales region (e.g. Memphis, TN) — optional"
+                  value={regionText}
+                  onChange={(e) => setRegionText(e.target.value)}
+                />
+              </>
             )}
           </>
         )}

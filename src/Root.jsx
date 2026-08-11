@@ -106,6 +106,7 @@ export default function Root() {
       profile={profile}
       org={org}
       onSignOut={() => supabase.auth.signOut()}
+      onOrgUpdate={setOrg}
     />
   )
 }

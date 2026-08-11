@@ -73,6 +73,7 @@ export default function Dashboard({
   onSignOut,
   onInvite,
   onRemoveMember,
+  onEditRegion,
 }) {
   const [acctOpen, setAcctOpen] = useState(false)
   const today = todayKey()
@@ -118,7 +119,20 @@ export default function Dashboard({
               {org && (
                 <p className="acct-team">
                   {org.name} · join code <strong>{org.join_code}</strong>
+                  <br />
+                  Region: {org.region?.name ?? 'Whole US'}
                 </p>
+              )}
+              {onEditRegion && (
+                <button
+                  className="acct-item neutral"
+                  onClick={() => {
+                    setAcctOpen(false)
+                    onEditRegion()
+                  }}
+                >
+                  🗺️ Edit sales region
+                </button>
               )}
               <button className="acct-item" onClick={onSignOut}>
                 Sign out

@@ -161,6 +161,18 @@
   cursor: pointer;
 }
 
+.acct-item.neutral {
+  background: #f3f4f6;
+  color: #374151;
+  margin-bottom: 8px;
+}
+
+.region-search {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 0 18px;
+}
+
 /* Bottom action bar */
 .bottom-bar {
   position: absolute;
@@ -216,6 +228,7 @@
   bottom: 0;
   left: 0;
   right: 0;
+  z-index: 15; /* above the dashboard overlay so the region sheet works there */
   background: #fff;
   border-radius: 16px 16px 0 0;
   padding: 8px 16px calc(16px + env(safe-area-inset-bottom));

@@ -26,13 +26,38 @@ const MAP_STYLES = {
   streets: 'mapbox://styles/mapbox/streets-v12',
 }
 
-// Territory: Memphis metro + DeSoto County MS (Southaven, Olive Branch,
-// Hernando) with padding for surrounding areas. [west, south] / [east, north]
-const TERRITORY_BOUNDS = [
-  [-90.35, 34.65],
-  [-89.55, 35.45],
+// Default map extent when a team has no sales region set: continental US
+const US_BOUNDS = [
+  [-125.5, 24.0],
+  [-66.0, 49.8],
 ]
-const TERRITORY_CENTER = [-89.95, 34.98]
+const US_CENTER = [-98.5795, 39.8283]
+
+// Pad a geocoder bbox [w,s,e,n] so region edges aren't claustrophobic
+function padBounds(bbox) {
+  const padX = (bbox[2] - bbox[0]) * 0.2
+  const padY = (bbox[3] - bbox[1]) * 0.2
+  return [
+    [bbox[0] - padX, bbox[1] - padY],
+    [bbox[2] + padX, bbox[3] + padY],
+  ]
+}
+
+async function searchRegions(query) {
+  const url =
+    `https://api.mapbox.com/search/geocode/v6/forward` +
+    `?q=${encodeURIComponent(query)}&types=place,district,region,postcode,locality` +
+    `&limit=5&country=US&access_token=${mapboxgl.accessToken}`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Region search failed: ${res.status}`)
+  const { features } = await res.json()
+  return features
+    .filter((f) => f.properties.bbox)
+    .map((f) => ({
+      name: f.properties.full_address ?? f.properties.name,
+      bounds: padBounds(f.properties.bbox),
+    }))
+}
 
 const VISITS_KEY = 'breadcrumbs-visits'
 const ROUTES_KEY = 'breadcrumbs-routes'
@@ -169,7 +194,7 @@ async function reverseGeocode(lat, lng) {
   }
 }
 
-export default function App({ profile, org, onSignOut }) {
+export default function App({ profile, org, onSignOut, onOrgUpdate }) {
   const mapContainer = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef([])
@@ -194,7 +219,7 @@ export default function App({ profile, org, onSignOut }) {
   const [activeRoute, setActiveRoute] = useState(() =>
     loadJson(ACTIVE_ROUTE_KEY, null)
   )
-  const [dayFilter, setDayFilter] = useState('today') // 'today' | 'all' | 'YYYY-MM-DD'
+  const [dayFilter, setDayFilter] = useState('all') // 'today' | 'all' | 'YYYY-MM-DD'
   const [selectedRouteId, setSelectedRouteId] = useState(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [editingVisitId, setEditingVisitId] = useState(null)
@@ -209,6 +234,9 @@ export default function App({ profile, org, onSignOut }) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [viewOpen, setViewOpen] = useState(false)
   const [screen, setScreen] = useState('dashboard') // 'dashboard' | 'map'
+  const [regionOpen, setRegionOpen] = useState(false)
+  const [regionQuery, setRegionQuery] = useState('')
+  const [regionResults, setRegionResults] = useState(null)
   const [calMonth, setCalMonth] = useState(() => {
     const d = new Date()
     return { y: d.getFullYear(), m: d.getMonth() }
@@ -360,10 +388,10 @@ export default function App({ profile, org, onSignOut }) {
     const map = new mapboxgl.Map({
       container: mapContainer.current,
       style: MAP_STYLES.satellite,
-      center: TERRITORY_CENTER,
-      zoom: 10,
-      maxBounds: TERRITORY_BOUNDS,
-      minZoom: 9,
+      center: US_CENTER,
+      zoom: 4,
+      maxBounds: US_BOUNDS,
+      minZoom: 3,
       attributionControl: false,
       logoPosition: 'bottom-right',
     })
@@ -433,6 +461,29 @@ export default function App({ profile, org, onSignOut }) {
     }
   }, [])
 
+  // Keep the map locked to the team's sales region (whole US when unset)
+  useEffect(() => {
+    mapRef.current?.setMaxBounds(org?.region?.bounds ?? US_BOUNDS)
+  }, [org?.region])
+
+  // A region typed during team signup gets geocoded and saved on first load
+  useEffect(() => {
+    const pending = localStorage.getItem('breadcrumbs-pending-region')
+    if (!pending || !org || org.region || profile.role !== 'manager') return
+    localStorage.removeItem('breadcrumbs-pending-region')
+    searchRegions(pending)
+      .then(async (results) => {
+        if (!results[0]) return
+        const { error } = await supabase
+          .from('orgs')
+          .update({ region: results[0] })
+          .eq('id', org.id)
+        if (!error) onOrgUpdate({ ...org, region: results[0] })
+      })
+      .catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [org?.id])
+
   // Draft pin follows the tap while the form is open
   useEffect(() => {
     draftMarkerRef.current?.remove()
@@ -467,10 +518,17 @@ export default function App({ profile, org, onSignOut }) {
         REP_COLORS.length
     ]
 
+  // Lead details (status, notes, customer info) are private to the rep
+  // who logged them; managers see everything. Teammates still see a
+  // neutral pin so coverage is visible without leads being poachable.
+  const canSeeDetails = (v) =>
+    v.repId === profile.id || profile.role === 'manager'
+
   const visibleVisits = visits.filter(
     (v) =>
       repMatches(v.repId) &&
-      (statusFilter === 'all' || v.status === statusFilter)
+      (statusFilter === 'all' ||
+        (canSeeDetails(v) && v.status === statusFilter))
   )
 
   // Saved pins — status-colored circles with the rep's initials;
@@ -480,8 +538,10 @@ export default function App({ profile, org, onSignOut }) {
     markersRef.current.forEach((m) => m.remove())
     markersRef.current = visibleVisits.map((v) => {
       const el = document.createElement('div')
-      el.className = v.followUp ? 'pin-marker revisit' : 'pin-marker'
-      el.style.background = STATUS_COLORS[v.status]
+      const detailed = canSeeDetails(v)
+      el.className =
+        detailed && v.followUp ? 'pin-marker revisit' : 'pin-marker'
+      el.style.background = detailed ? STATUS_COLORS[v.status] : '#64748b'
       el.textContent = initialsOf(repName(v.repId))
       el.addEventListener('click', (e) => {
         e.stopPropagation()
@@ -775,6 +835,35 @@ export default function App({ profile, org, onSignOut }) {
     mapRef.current?.fitBounds(bounds, { padding: 60, maxZoom: 17 })
   }
 
+  async function runRegionSearch() {
+    if (!regionQuery.trim()) return
+    setRegionResults(null)
+    try {
+      setRegionResults(await searchRegions(regionQuery.trim()))
+    } catch (err) {
+      alert(err.message)
+      setRegionResults([])
+    }
+  }
+
+  async function chooseRegion(reg) {
+    const { error } = await supabase
+      .from('orgs')
+      .update({ region: reg })
+      .eq('id', org.id)
+    if (error) {
+      alert(`Could not save region: ${error.message}`)
+      return
+    }
+    onOrgUpdate({ ...org, region: reg })
+    setRegionOpen(false)
+    setRegionQuery('')
+    setRegionResults(null)
+    const bounds = reg?.bounds ?? US_BOUNDS
+    mapRef.current?.setMaxBounds(bounds)
+    mapRef.current?.fitBounds(bounds, { padding: 40 })
+  }
+
   async function inviteRep() {
     const text =
       `Join ${org?.name ?? 'our team'} on Breadcrumbs!\n` +
@@ -891,6 +980,9 @@ export default function App({ profile, org, onSignOut }) {
           onSignOut={onSignOut}
           onInvite={inviteRep}
           onRemoveMember={profile.role === 'manager' ? removeMember : null}
+          onEditRegion={
+            profile.role === 'manager' ? () => setRegionOpen(true) : null
+          }
           onOpenMap={(view) => {
             if (view) setViewRep(view)
             setScreen('map')
@@ -957,6 +1049,55 @@ export default function App({ profile, org, onSignOut }) {
           )}
           <button className="fab" onClick={dropAtMyLocation}>
             📍 Pin
+          </button>
+        </div>
+      )}
+
+      {regionOpen && (
+        <div className="sheet region-sheet">
+          <div className="sheet-handle" />
+          <p className="sheet-title">Sales region</p>
+          <p className="sheet-sub">
+            Current: {org?.region?.name ?? 'Whole United States'}
+          </p>
+          <div className="field-row">
+            <input
+              className="field"
+              placeholder="City, county, or zip (e.g. Memphis, TN)"
+              value={regionQuery}
+              onChange={(e) => setRegionQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && runRegionSearch()}
+            />
+            <button className="btn save region-search" onClick={runRegionSearch}>
+              Search
+            </button>
+          </div>
+          <div className="scroll-list">
+            {regionResults?.map((r) => (
+              <button
+                className="day-row"
+                key={r.name}
+                onClick={() => chooseRegion(r)}
+              >
+                <span className="day-label">📍 {r.name}</span>
+              </button>
+            ))}
+            {regionResults?.length === 0 && (
+              <p className="empty">No matches — try a city or zip code.</p>
+            )}
+            <button className="day-row" onClick={() => chooseRegion(null)}>
+              <span className="day-label">🇺🇸 Whole United States</span>
+            </button>
+          </div>
+          <button
+            className="btn cancel"
+            onClick={() => {
+              setRegionOpen(false)
+              setRegionQuery('')
+              setRegionResults(null)
+            }}
+          >
+            Close
           </button>
         </div>
       )}
@@ -1124,23 +1265,9 @@ export default function App({ profile, org, onSignOut }) {
             </>
           ) : (
             <>
-              <p className="readonly-status" style={{ color: STATUS_COLORS[editingVisit.status] }}>
-                {editingVisit.status.toUpperCase()}
-                {editingVisit.followUp ? ' · 🔁 REVISIT' : ''}
-              </p>
-              {(editingVisit.customerName || editingVisit.customerPhone) && (
-                <p className="readonly-note">
-                  {[
-                    editingVisit.customerName,
-                    editingVisit.customerPhone,
-                    editingVisit.customerEmail,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </p>
-              )}
               <p className="readonly-note">
-                {editingVisit.note || 'No note.'}
+                A visit was logged here. Lead details are private to{' '}
+                {repName(editingVisit.repId)}.
               </p>
               <button className="btn cancel" onClick={() => setEditingVisitId(null)}>
                 Close
@@ -1226,13 +1353,19 @@ export default function App({ profile, org, onSignOut }) {
               <div className="visit-row" key={v.id}>
                 <span
                   className="status-dot"
-                  style={{ background: STATUS_COLORS[v.status] }}
+                  style={{
+                    background: canSeeDetails(v)
+                      ? STATUS_COLORS[v.status]
+                      : '#94a3b8',
+                  }}
                 />
                 <div className="visit-body">
                   <p className="visit-addr">
                     {v.address ?? `${v.lat.toFixed(5)}, ${v.lng.toFixed(5)}`}
                   </p>
-                  {v.note && <p className="visit-note">{v.note}</p>}
+                  {canSeeDetails(v) && v.note && (
+                    <p className="visit-note">{v.note}</p>
+                  )}
                   <small className="visit-time">{formatTime(v.createdAt)}</small>
                 </div>
               </div>
