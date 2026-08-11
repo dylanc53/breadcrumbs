@@ -1,16 +1,97 @@
-# React + Vite
+# 🍞 Breadcrumbs
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Door-to-door sales canvassing app. Reps drop pins at the houses they visit,
+tag the lead cold/warm/hot with notes and customer info, and their walking
+route draws itself as a breadcrumb trail on a satellite map. Managers see the
+whole team; teammates see each other's coverage without seeing each other's
+leads.
 
-Currently, two official plugins are available:
+- **Web app:** https://breadcrumbs-blue-zeta.vercel.app
+- **iOS app:** distributed through TestFlight (built by Codemagic from this repo)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+- **Pins** — tap the map or use GPS; the street address, neighborhood, city,
+  and zip fill in automatically via reverse geocoding
+- **Visit form** — customer name/phone/email, cold/warm/hot status, notes with
+  voice dictation, and a "Revisit this door" flag (amber-ringed pin)
+- **Selling sessions** — Start/Stop selling records a GPS breadcrumb route;
+  on iOS the native tracker keeps recording with the phone in a pocket
+- **Live locations** — while a session runs, the rep's position streams to
+  every teammate's map as a pulsing dot (Supabase realtime)
+- **Team model** — first user creates a team (manager) and invites reps with a
+  6-character join code; managers can edit any pin, remove members, and set
+  the team's sales region (map locks to it; unset = whole US)
+- **Lead privacy** — status, notes, and customer info are visible only to the
+  owning rep and managers; teammates see neutral pins and trails
+- **Dashboard** — post-login home with KPI cards (doors/hot/miles today),
+  a static-map preview of recent activity, and the team roster
+- **History** — month calendar badged with route counts per day; tap a line on
+  the map to replay that day's visits
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Stack
 
-## Expanding the Oxlint configuration
+| Layer     | Tech                                                        |
+| --------- | ----------------------------------------------------------- |
+| Frontend  | React + Vite, Mapbox GL JS                                  |
+| Backend   | Supabase (Postgres, auth, row-level security, realtime)     |
+| Native    | Capacitor iOS shell; Transistorsoft background-geolocation; |
+|           | Capgo speech-recognition                                    |
+| Web host  | Vercel                                                      |
+| iOS CI    | Codemagic (`codemagic.yaml`) → App Store Connect/TestFlight |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Local development
+
+```sh
+npm install
+cp .env.example .env   # then fill in the values below
+npm run dev
+```
+
+`.env` values:
+
+| Variable                 | Where it comes from                              |
+| ------------------------ | ------------------------------------------------ |
+| `VITE_MAPBOX_TOKEN`      | Mapbox account → public token (`pk.…`)           |
+| `VITE_SUPABASE_URL`      | Supabase project → Settings → API                |
+| `VITE_SUPABASE_ANON_KEY` | Supabase publishable key (`sb_publishable_…`)    |
+
+### Database
+
+Run the SQL files in `supabase/` against the project's SQL editor, in order:
+`schema.sql`, then each `migration-N-*.sql`. Also disable
+**Authentication → Email → Confirm email** (signup is join-code gated instead).
+
+## Deploying
+
+**Web** — Vercel builds locally (the hosted env var is stored as Sensitive,
+which hides it from remote builds):
+
+```sh
+vercel build --prod
+vercel deploy --prebuilt --prod --yes
+```
+
+**iOS** — push to `master`, then start the `ios-testflight` workflow in
+Codemagic. Signing uses stored code-signing identities (certificate ref
+`breadcrumbs`, profile ref `breadcrumbs_app_store`); publishing uses the App
+Store Connect key integration named `breadcrumbs`. Builds land in TestFlight
+automatically. After changing web code, `npx cap sync ios` before committing
+so the native shell picks it up.
+
+## Project layout
+
+```
+src/
+  App.jsx         map screen, panels, data layer (Supabase CRUD)
+  Dashboard.jsx   post-login home: KPIs, map preview, roster
+  Auth.jsx        login / signup with create-or-join team
+  Landing.jsx     logged-out marketing page
+  Root.jsx        session + profile gating
+  tracking.js     GPS engine switch: Transistorsoft (native) / watchPosition (web)
+  dictation.js    voice-to-text: native speech engine / Web Speech API
+  supabase.js     client init
+supabase/         schema + numbered migrations (run manually, in order)
+ios/              Capacitor iOS project (built by Codemagic)
+codemagic.yaml    iOS build + TestFlight pipeline
+```
