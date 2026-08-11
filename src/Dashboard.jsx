@@ -74,6 +74,7 @@ export default function Dashboard({
   onInvite,
   onRemoveMember,
   onEditRegion,
+  liveRepIds,
 }) {
   const [acctOpen, setAcctOpen] = useState(false)
   const today = todayKey()
@@ -189,6 +190,7 @@ export default function Dashboard({
                 {t.name}
                 {isMe ? ' (you)' : ''}
                 {t.role === 'manager' ? ' ★' : ''}
+                {liveRepIds?.has(t.id) ? ' 🟢' : ''}
               </span>
               <span className="day-meta">
                 {s.pins} pins · {s.hot} hot · {s.lastSeen}

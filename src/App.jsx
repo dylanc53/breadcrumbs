@@ -200,6 +200,7 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
   const markersRef = useRef([])
   const draftMarkerRef = useRef(null)
   const routesGeojsonRef = useRef({ type: 'FeatureCollection', features: [] })
+  const liveMarkersRef = useRef([])
   const openPanelRef = useRef(null)
 
   const [visits, setVisits] = useState([])
@@ -234,6 +235,8 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
   const [statusFilter, setStatusFilter] = useState('all')
   const [viewOpen, setViewOpen] = useState(false)
   const [screen, setScreen] = useState('dashboard') // 'dashboard' | 'map'
+  const [liveLocations, setLiveLocations] = useState({})
+  const [liveTick, setLiveTick] = useState(0)
   const [regionOpen, setRegionOpen] = useState(false)
   const [regionQuery, setRegionQuery] = useState('')
   const [regionResults, setRegionResults] = useState(null)
@@ -461,6 +464,65 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     }
   }, [])
 
+  // Live teammate locations: initial load + realtime subscription, plus
+  // a slow tick so dots that stop updating fade out
+  useEffect(() => {
+    const applyRow = (r) =>
+      setLiveLocations((prev) => ({
+        ...prev,
+        [r.rep_id]: {
+          repId: r.rep_id,
+          lat: r.lat,
+          lng: r.lng,
+          updatedAt: r.updated_at,
+        },
+      }))
+    supabase
+      .from('live_locations')
+      .select('*')
+      .then(({ data }) => (data ?? []).forEach(applyRow))
+    const channel = supabase
+      .channel('live-locations')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'live_locations' },
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            setLiveLocations((prev) => {
+              const next = { ...prev }
+              delete next[payload.old.rep_id]
+              return next
+            })
+          } else {
+            applyRow(payload.new)
+          }
+        }
+      )
+      .subscribe()
+    const tick = setInterval(() => setLiveTick((t) => t + 1), 30000)
+    return () => {
+      supabase.removeChannel(channel)
+      clearInterval(tick)
+    }
+  }, [])
+
+  // Publish own position while selling
+  useEffect(() => {
+    const last = activeRoute?.path[activeRoute.path.length - 1]
+    if (!last) return
+    supabase
+      .from('live_locations')
+      .upsert({
+        rep_id: profile.id,
+        org_id: profile.org_id,
+        lat: last.lat,
+        lng: last.lng,
+        updated_at: new Date().toISOString(),
+      })
+      .then(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRoute?.path.length])
+
   // Keep the map locked to the team's sales region (whole US when unset)
   useEffect(() => {
     mapRef.current?.setMaxBounds(org?.region?.bounds ?? US_BOUNDS)
@@ -563,6 +625,29 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visits, viewRep, statusFilter, teammates])
+
+  // Live teammate dots — fresh within the last 3 minutes, own dot
+  // excluded (the blue locate dot already covers it)
+  const liveNow = Object.values(liveLocations).filter(
+    (l) => Date.now() - new Date(l.updatedAt).getTime() < 180000
+  )
+
+  useEffect(() => {
+    if (!mapRef.current) return
+    liveMarkersRef.current.forEach((m) => m.remove())
+    liveMarkersRef.current = liveNow
+      .filter((l) => l.repId !== profile.id)
+      .map((l) => {
+        const el = document.createElement('div')
+        el.className = 'live-marker'
+        el.style.background = repColor(l.repId)
+        el.textContent = initialsOf(repName(l.repId))
+        return new mapboxgl.Marker({ element: el })
+          .setLngLat([l.lng, l.lat])
+          .addTo(mapRef.current)
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveLocations, teammates, liveTick])
 
   // Push visible route lines to the map, colored per rep
   useEffect(() => {
@@ -705,6 +790,11 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     const finished = { ...activeRoute, path, endedAt: new Date().toISOString() }
     setActiveRoute(null)
     localStorage.removeItem(ACTIVE_ROUTE_KEY)
+    supabase
+      .from('live_locations')
+      .delete()
+      .eq('rep_id', profile.id)
+      .then(() => {})
     if (finished.path.length >= 2) {
       const { error } = await supabase
         .from('routes')
@@ -983,6 +1073,7 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
           onEditRegion={
             profile.role === 'manager' ? () => setRegionOpen(true) : null
           }
+          liveRepIds={new Set(liveNow.map((l) => l.repId))}
           onOpenMap={(view) => {
             if (view) setViewRep(view)
             setScreen('map')
