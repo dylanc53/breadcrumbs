@@ -221,7 +221,9 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
   const draftMarkerRef = useRef(null)
   const routesGeojsonRef = useRef({ type: 'FeatureCollection', features: [] })
   const regionGeojsonRef = useRef({ type: 'FeatureCollection', features: [] })
+  const regionRef = useRef(null)
   const regionFittedRef = useRef(false)
+  const leashKeyRef = useRef('')
   const liveMarkersRef = useRef([])
   const openPanelRef = useRef(null)
 
@@ -407,6 +409,34 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     }
   }, [profile.id, profile.org_id])
 
+  // Zoom-aware region lock: zoomed out, the camera is confined to the
+  // region exactly; zooming in, the boundary loosens by just half the
+  // current viewport (capped) so any pin — even on the border — can be
+  // centered. Recomputed continuously while zooming, so the constraint
+  // follows the gesture instead of fighting it.
+  const applyRegionLeash = () => {
+    const map = mapRef.current
+    if (!map) return
+    const region = regionRef.current
+    let next
+    if (!region?.bounds) {
+      next = US_BOUNDS
+    } else {
+      const [[w, s], [e, n]] = region.bounds
+      const vb = map.getBounds()
+      const mx = Math.min((vb.getEast() - vb.getWest()) / 2, (e - w) * 0.15)
+      const my = Math.min((vb.getNorth() - vb.getSouth()) / 2, (n - s) * 0.15)
+      next = [
+        [w - mx, s - my],
+        [e + mx, n + my],
+      ]
+    }
+    const key = next.flat().map((v) => v.toFixed(4)).join(',')
+    if (key === leashKeyRef.current) return
+    leashKeyRef.current = key
+    map.setMaxBounds(next)
+  }
+
   useEffect(() => {
     if (tokenMissing || mapRef.current) return
 
@@ -415,10 +445,14 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
       style: MAP_STYLES.satellite,
       center: US_CENTER,
       zoom: 4,
-      minZoom: 2,
+      maxBounds: US_BOUNDS,
+      minZoom: 3,
       attributionControl: false,
       logoPosition: 'bottom-right',
     })
+
+    map.on('zoom', applyRegionLeash)
+    map.on('resize', applyRegionLeash)
 
     // Compact ⓘ instead of the full attribution text line (the small
     // Mapbox logo itself is required by their terms of service)
@@ -560,9 +594,10 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRoute?.path.length])
 
-  // Draw the sales region outline and settle the first view on it;
-  // the camera itself is never constrained
+  // Draw the sales region outline, settle the first view on it, and
+  // engage the zoom-aware lock
   useEffect(() => {
+    regionRef.current = org?.region ?? null
     regionGeojsonRef.current = regionOutline(org?.region)
     const map = mapRef.current
     if (!map) return
@@ -571,6 +606,8 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
       regionFittedRef.current = true
       map.fitBounds(org.region.bounds, { padding: 40, animate: false })
     }
+    applyRegionLeash()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [org?.region])
 
   // A region typed during team signup gets geocoded and saved on first load
