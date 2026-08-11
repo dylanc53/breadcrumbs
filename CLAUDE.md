@@ -29,9 +29,13 @@ adapters in App.jsx. Follow that pattern for new fields.
 
 ## Non-negotiable rules
 
-- **Deploy web with a LOCAL build only**: `vercel build --prod` then
-  `vercel deploy --prebuilt --prod --yes`. Remote Vercel builds get a
-  placeholder for the "Sensitive" env var and ship a broken bundle.
+- **Deploy web by pushing to `master`** — Vercel auto-builds and deploys on
+  push (GitHub integration, confirmed working Aug 2026). No local build, no
+  `vercel` CLI needed for routine shipping; see `/ship`. (Historical note:
+  this used to require a local prebuilt deploy because the Mapbox token was
+  stored "Sensitive" and Supabase vars weren't registered in Vercel at all —
+  both are now fixed as plain project env vars. Don't reintroduce either
+  problem.)
 - **Schema changes** = new `supabase/migration-N-*.sql` file; Dylan pastes it
   into the Supabase SQL editor manually. Never assume a migration has run.
 - **After any web change, run `npx cap sync ios` before committing** so the
