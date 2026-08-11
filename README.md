@@ -64,13 +64,10 @@ Run the SQL files in `supabase/` against the project's SQL editor, in order:
 
 ## Deploying
 
-**Web** — Vercel builds locally (the hosted env var is stored as Sensitive,
-which hides it from remote builds):
-
-```sh
-vercel build --prod
-vercel deploy --prebuilt --prod --yes
-```
+**Web** — auto-deploys on every push to `master` via Vercel's GitHub
+integration. `git push` is the whole deploy step; no CLI needed, no local
+build required. (A manual `vercel deploy --prod --yes` still works too, e.g.
+to preview before pushing.)
 
 **iOS** — push to `master`, then start the `ios-testflight` workflow in
 Codemagic. Signing uses stored code-signing identities (certificate ref
