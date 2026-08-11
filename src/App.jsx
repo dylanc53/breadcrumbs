@@ -33,6 +33,17 @@ const US_BOUNDS = [
 ]
 const US_CENTER = [-98.5795, 39.8283]
 
+// The camera leash extends well past the region so working near its
+// edges (zooming into an edge pin) never fights the clamp
+function cameraBounds(bounds) {
+  const w = bounds[1][0] - bounds[0][0]
+  const h = bounds[1][1] - bounds[0][1]
+  return [
+    [bounds[0][0] - w * 0.5, bounds[0][1] - h * 0.5],
+    [bounds[1][0] + w * 0.5, bounds[1][1] + h * 0.5],
+  ]
+}
+
 // Pad a geocoder bbox [w,s,e,n] so region edges aren't claustrophobic
 function padBounds(bbox) {
   const padX = (bbox[2] - bbox[0]) * 0.2
@@ -525,7 +536,9 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
 
   // Keep the map locked to the team's sales region (whole US when unset)
   useEffect(() => {
-    mapRef.current?.setMaxBounds(org?.region?.bounds ?? US_BOUNDS)
+    mapRef.current?.setMaxBounds(
+      org?.region?.bounds ? cameraBounds(org.region.bounds) : US_BOUNDS
+    )
   }, [org?.region])
 
   // A region typed during team signup gets geocoded and saved on first load
@@ -950,7 +963,7 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     setRegionQuery('')
     setRegionResults(null)
     const bounds = reg?.bounds ?? US_BOUNDS
-    mapRef.current?.setMaxBounds(bounds)
+    mapRef.current?.setMaxBounds(reg?.bounds ? cameraBounds(bounds) : bounds)
     mapRef.current?.fitBounds(bounds, { padding: 40 })
   }
 
