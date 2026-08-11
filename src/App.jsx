@@ -33,15 +33,24 @@ const US_BOUNDS = [
 ]
 const US_CENTER = [-98.5795, 39.8283]
 
-// The camera leash extends well past the region so working near its
-// edges (zooming into an edge pin) never fights the clamp
-function cameraBounds(bounds) {
-  const w = bounds[1][0] - bounds[0][0]
-  const h = bounds[1][1] - bounds[0][1]
-  return [
-    [bounds[0][0] - w * 0.5, bounds[0][1] - h * 0.5],
-    [bounds[1][0] + w * 0.5, bounds[1][1] + h * 0.5],
-  ]
+// The sales region is drawn, not enforced: a dashed outline shows the
+// turf, the camera roams free, and the Territory button snaps back
+function regionOutline(region) {
+  if (!region?.bounds) return { type: 'FeatureCollection', features: [] }
+  const [[w, s], [e, n]] = region.bounds
+  return {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: [[w, s], [e, s], [e, n], [w, n], [w, s]],
+        },
+      },
+    ],
+  }
 }
 
 // Pad a geocoder bbox [w,s,e,n] so region edges aren't claustrophobic
@@ -211,6 +220,8 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
   const markersRef = useRef([])
   const draftMarkerRef = useRef(null)
   const routesGeojsonRef = useRef({ type: 'FeatureCollection', features: [] })
+  const regionGeojsonRef = useRef({ type: 'FeatureCollection', features: [] })
+  const regionFittedRef = useRef(false)
   const liveMarkersRef = useRef([])
   const openPanelRef = useRef(null)
 
@@ -404,8 +415,7 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
       style: MAP_STYLES.satellite,
       center: US_CENTER,
       zoom: 4,
-      maxBounds: US_BOUNDS,
-      minZoom: 3,
+      minZoom: 2,
       attributionControl: false,
       logoPosition: 'bottom-right',
     })
@@ -428,6 +438,22 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     // which wipes sources, so layers are re-added there
     const ensureRouteLayers = () => {
       if (map.getSource('routes')) return
+      map.addSource('region', {
+        type: 'geojson',
+        data: regionGeojsonRef.current,
+      })
+      map.addLayer({
+        id: 'region-outline',
+        type: 'line',
+        source: 'region',
+        layout: { 'line-join': 'round' },
+        paint: {
+          'line-color': '#a855f7',
+          'line-width': 2,
+          'line-dasharray': [2, 2],
+          'line-opacity': 0.65,
+        },
+      })
       map.addSource('routes', {
         type: 'geojson',
         data: routesGeojsonRef.current,
@@ -534,11 +560,17 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRoute?.path.length])
 
-  // Keep the map locked to the team's sales region (whole US when unset)
+  // Draw the sales region outline and settle the first view on it;
+  // the camera itself is never constrained
   useEffect(() => {
-    mapRef.current?.setMaxBounds(
-      org?.region?.bounds ? cameraBounds(org.region.bounds) : US_BOUNDS
-    )
+    regionGeojsonRef.current = regionOutline(org?.region)
+    const map = mapRef.current
+    if (!map) return
+    map.getSource('region')?.setData(regionGeojsonRef.current)
+    if (org?.region?.bounds && !regionFittedRef.current) {
+      regionFittedRef.current = true
+      map.fitBounds(org.region.bounds, { padding: 40, animate: false })
+    }
   }, [org?.region])
 
   // A region typed during team signup gets geocoded and saved on first load
@@ -962,9 +994,7 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
     setRegionOpen(false)
     setRegionQuery('')
     setRegionResults(null)
-    const bounds = reg?.bounds ?? US_BOUNDS
-    mapRef.current?.setMaxBounds(reg?.bounds ? cameraBounds(bounds) : bounds)
-    mapRef.current?.fitBounds(bounds, { padding: 40 })
+    mapRef.current?.fitBounds(reg?.bounds ?? US_BOUNDS, { padding: 40 })
   }
 
   async function inviteRep() {
@@ -1113,6 +1143,17 @@ export default function App({ profile, org, onSignOut, onOrgUpdate }) {
             <button className="map-chip" onClick={toggleMapStyle}>
               {mapStyle === 'satellite' ? '🗺️ Street view' : '🛰️ Satellite'}
             </button>
+            {org?.region?.bounds && (
+              <button
+                className="map-chip"
+                onClick={() => {
+                  mapRef.current?.fitBounds(org.region.bounds, { padding: 40 })
+                  setMenuOpen(false)
+                }}
+              >
+                🎯 Territory
+              </button>
+            )}
             <button
               className="map-chip"
               onClick={() => {
